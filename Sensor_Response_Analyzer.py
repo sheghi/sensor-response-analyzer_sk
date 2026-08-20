@@ -16,14 +16,17 @@ def calc_metrics(df):
     time = df['time'].to_numpy()
     signal = df['signal'].to_numpy()
 
-    initial = signal[0]
-    final = signal[-1]
+    initial = np.mean(signal[:50])
+    final = np.max(signal)
     span = final - initial
 
     def crossing(frac):
-        target = initial + span * frac
+        target = initial + (final - initial) * frac
         idx = np.where(signal >= target)[0]
-        return float(time[idx[0]]) if len(idx) else np.nan
+
+        if len(idx) == 0:
+            return np.nan
+        return float(time[idx[0]])
 
     t10 = crossing(0.10)
     t50 = crossing(0.50)
