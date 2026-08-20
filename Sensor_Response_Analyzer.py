@@ -12,7 +12,7 @@ st.set_page_config(
 st.title("Gas Sensor Response Analyzer")
 
 uploaded = st.file_uploader(
-    "Upload Excel or CSV file",
+    "Upload Excel or CSV",
     type=["xlsx", "csv"]
 )
 
@@ -21,7 +21,9 @@ def prepare_time(df):
 
     try:
 
-        t = pd.to_datetime(df["time"].astype(str))
+        t = pd.to_datetime(
+            df["time"].astype(str)
+        )
 
         elapsed = (
             t - t.iloc[0]
@@ -94,11 +96,17 @@ def analyse_cycle(signal, time, start, end, cycle_no):
 
     smoothed = smooth_signal(signal)
 
+    # BASELINE
+
+    baseline_region = smoothed[
+        max(0, start - 300):start
+    ]
+
     baseline = np.median(
-        smoothed[
-            max(0, start - 300):start
-        ]
+        baseline_region
     )
+
+    # PLATEAU
 
     plateau_start = start + int(
         0.5 * (end - start)
@@ -119,19 +127,11 @@ def analyse_cycle(signal, time, start, end, cycle_no):
     if delta <= 0:
         return None
 
-    #########################
+    # =====================================
     # RESPONSE
-    #########################
+    # =====================================
 
     gas_on_time = time[start]
-
-    target30 = baseline + (
-        0.30 * delta
-    )
-
-    target90 = baseline + (
-        0.90 * delta
-    )
 
     response_signal = smoothed[
         start:end
@@ -140,6 +140,14 @@ def analyse_cycle(signal, time, start, end, cycle_no):
     response_time = time[
         start:end
     ]
+
+    target30 = baseline + (
+        0.30 * delta
+    )
+
+    target90 = baseline + (
+        0.90 * delta
+    )
 
     idx30 = np.where(
         response_signal >= target30
@@ -150,38 +158,45 @@ def analyse_cycle(signal, time, start, end, cycle_no):
     )[0]
 
     if len(idx30) == 0:
-        t30 = np.nan
+        t30_response = np.nan
     else:
-        t30 = (
+        t30_response = (
             response_time[idx30[0]]
             - gas_on_time
         )
 
     if len(idx90) == 0:
-        t90 = np.nan
+        t90_response = np.nan
     else:
-        t90 = (
+        t90_response = (
             response_time[idx90[0]]
             - gas_on_time
         )
 
-    #########################
+    # =====================================
     # RECOVERY
-    #########################
+    # =====================================
 
-    gas_off_time = time[end]
+    # Start recovery near end of plateau
+    gas_off_idx = start + int(
+        0.85 * (end - start)
+    )
+
+    gas_off_time = time[
+        gas_off_idx
+    ]
 
     recovery_signal = smoothed[
-        end:min(
+        gas_off_idx:min(
             len(smoothed),
-            end + 2000
+            gas_off_idx + 2000
         )
     ]
 
     recovery_time = time[
-        end:min(
+        gas_off_idx:min(
             len(time),
-            end + 2000
+            gas_off_idx + 2000
         )
     ]
 
@@ -202,27 +217,39 @@ def analyse_cycle(signal, time, start, end, cycle_no):
     )[0]
 
     if len(idx60) == 0:
-        rec60 = np.nan
+        t60_recovery = np.nan
     else:
-        rec60 = (
+        t60_recovery = (
             recovery_time[idx60[0]]
             - gas_off_time
         )
 
     if len(idx10) == 0:
-        rec10 = np.nan
+        t10_recovery = np.nan
     else:
-        rec10 = (
+        t10_recovery = (
             recovery_time[idx10[0]]
             - gas_off_time
         )
 
     return {
         "Cycle": cycle_no,
-        "T30 Response (s)": round(t30, 2),
-        "T90 Response (s)": round(t90, 2),
-        "T60 Recovery (s)": round(rec60, 2),
-        "T10 Recovery (s)": round(rec10, 2)
+        "T30 Response (s)": round(
+            t30_response,
+            2
+        ),
+        "T90 Response (s)": round(
+            t90_response,
+            2
+        ),
+        "T60 Recovery (s)": round(
+            t60_recovery,
+            2
+        ),
+        "T10 Recovery (s)": round(
+            t10_recovery,
+            2
+        )
     }
 
 
@@ -242,7 +269,7 @@ if uploaded:
 
         if "signal" not in df.columns:
             st.error(
-                "Column 'signal' not found"
+                "signal column not found"
             )
             st.stop()
 
@@ -290,15 +317,12 @@ if uploaded:
             st.error(
                 "No valid cycles detected."
             )
+
             st.stop()
 
-        results_df = pd.DataFrame(
-            results
-        )
+        results_df = pd.DataFrame(results)
 
-        st.subheader(
-            "Cycle Results"
-        )
+        st.subheader("Cycle Results")
 
         st.dataframe(
             results_df,
@@ -326,9 +350,7 @@ if uploaded:
             ]
         })
 
-        st.subheader(
-            "Average Results"
-        )
+        st.subheader("Average Results")
 
         st.dataframe(
             summary_df,
@@ -394,4 +416,6 @@ if uploaded:
 
 else:
 
-    st.info("Upload a file to begin analysis.")
+    st.info(
+        "Upload a file to begin analysis."
+    )
