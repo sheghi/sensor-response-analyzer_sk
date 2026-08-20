@@ -4,28 +4,65 @@ import numpy as np
 import plotly.express as px
 from io import BytesIO
 
-st.set_page_config(page_title="Sensor Response Analyzer", layout="wide")
+st.set_page_config(
+    page_title="Sensor Response Analyzer",
+    layout="wide"
+)
 
 st.title("Sensor Response Analyzer")
-st.markdown("Upload CSV or Excel files containing **time** and **signal** columns.")
 
-uploaded = st.file_uploader("Upload file", type=["csv","xlsx"])
+uploaded = st.file_uploader(
+    "Upload CSV or Excel file",
+    type=["csv", "xlsx"]
+)
 
 
 def calc_metrics(df):
-    time = df['time'].to_numpy()
-    signal = df['signal'].to_numpy()
 
-    initial = np.mean(signal[:50])
-    final = np.max(signal)
-    span = final - initial
+    df.columns = [str(c).lower().strip() for c in df.columns]
+
+    if "time" not in df.columns or "signal" not in df.columns:
+        raise ValueError(
+            "File must contain columns named 'time' and 'signal'"
+        )
+
+    time = pd.to_numeric(
+        df["time"],
+        errors="coerce"
+    ).to_numpy()
+
+    signal = pd.to_numeric(
+        df["signal"],
+        errors="coerce"
+    ).to_numpy()
+
+    mask = ~(np.isnan(time) | np.isnan(signal))
+
+    time = time[mask]
+    signal = signal[mask]
+
+    if len(time) < 10:
+        raise ValueError("Not enough valid data points")
+
+    baseline = np.mean(signal[:50])
+
+    peak = np.max(signal)
+
+    peak_idx = np.argmax(signal)
+
+    peak_time = time[peak_idx]
+
+    amplitude = peak - baseline
 
     def crossing(frac):
-        target = initial + (final - initial) * frac
+
+        target = baseline + amplitude * frac
+
         idx = np.where(signal >= target)[0]
 
         if len(idx) == 0:
             return np.nan
+
         return float(time[idx[0]])
 
     t10 = crossing(0.10)
@@ -33,69 +70,118 @@ def calc_metrics(df):
     t90 = crossing(0.90)
     t95 = crossing(0.95)
 
-    rise = t90 - t10 if not np.isnan(t90) and not np.isnan(t10) else np.nan
+    rise_time = (
+        t90 - t10
+        if not np.isnan(t10)
+        and not np.isnan(t90)
+        else np.nan
+    )
 
-    peak = np.max(signal)
-    overshoot = ((peak-final)/abs(final))*100 if final != 0 else 0
+    rms_noise = float(
+        np.std(signal[:50])
+    )
 
-    rms_noise = float(np.std(signal))
-
-    tau = crossing(0.632)
-
-    tol = abs(final) * 0.02
-    settling = np.nan
-    for i in range(len(signal)-1, -1, -1):
-        if abs(signal[i]-final) > tol:
-            settling = time[min(i+1, len(signal)-1)]
-            break
+    overshoot = (
+        ((peak - signal[-1]) / peak) * 100
+        if peak != 0
+        else 0
+    )
 
     return {
-        'T10': t10,
-        'T50': t50,
-        'T90': t90,
-        'T95': t95,
-        'Tau (63.2%)': tau,
-        'Rise Time': rise,
-        'Settling Time': settling,
-        'Overshoot (%)': overshoot,
-        'RMS Noise': rms_noise
+        "Baseline": baseline,
+        "Peak": peak,
+        "Peak Time": peak_time,
+        "Amplitude": amplitude,
+        "T10": t10,
+        "T50": t50,
+        "T90": t90,
+        "T95": t95,
+        "Rise Time": rise_time,
+        "Overshoot (%)": overshoot,
+        "RMS Noise": rms_noise
     }
 
+
 if uploaded:
-    if uploaded.name.endswith('.csv'):
-        df = pd.read_csv(uploaded)
-    else:
-        df = pd.read_excel(uploaded)
 
-    df.columns = [c.lower().strip() for c in df.columns]
+    try:
 
-    if 'time' not in df.columns or 'signal' not in df.columns:
-        st.error("File must contain columns named 'time' and 'signal'.")
-    else:
+        if uploaded.name.endswith(".csv"):
+            df = pd.read_csv(uploaded)
+        else:
+            df = pd.read_excel(uploaded)
+
         metrics = calc_metrics(df)
 
-        st.subheader('Metrics')
-        c1,c2,c3,c4 = st.columns(4)
-        items=list(metrics.items())
-        for idx,(k,v) in enumerate(items):
-            [c1,c2,c3,c4][idx%4].metric(k, f'{v:.4f}' if pd.notna(v) else '-')
+        st.subheader("Metrics")
 
-        fig = px.line(df, x='time', y='signal', title='Sensor Response Curve')
-        st.plotly_chart(fig, use_container_width=True)
+        cols = st.columns(4)
 
-        st.subheader('Data Preview')
-        st.dataframe(df.head(50), use_container_width=True)
+        for i, (name, value) in enumerate(metrics.items()):
 
-        export_df = pd.DataFrame([metrics])
+            display = (
+                f"{value:.4f}"
+                if isinstance(value, (int, float, np.floating))
+                and not np.isnan(value)
+                else str(value)
+            )
+
+            cols[i % 4].metric(
+                name,
+                display
+            )
+
+        df.columns = [
+            str(c).lower().strip()
+            for c in df.columns
+        ]
+
+        fig = px.line(
+            df,
+            x="time",
+            y="signal",
+            title="Sensor Response Curve"
+        )
+
+        st.plotly_chart(
+            fig,
+            use_container_width=True
+        )
+
+        st.subheader("Data Preview")
+        st.dataframe(
+            df.head(100),
+            use_container_width=True
+        )
+
+        export_df = pd.DataFrame(
+            [metrics]
+        )
+
         buffer = BytesIO()
-        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            export_df.to_excel(writer, index=False, sheet_name='Results')
+
+        with pd.ExcelWriter(
+            buffer,
+            engine="openpyxl"
+        ) as writer:
+
+            export_df.to_excel(
+                writer,
+                index=False,
+                sheet_name="Results"
+            )
 
         st.download_button(
-            'Download Results (Excel)',
+            "Download Results (Excel)",
             data=buffer.getvalue(),
-            file_name='sensor_analysis_results.xlsx',
-            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            file_name="sensor_analysis_results.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
+    except Exception as e:
+
+        st.error(f"Error: {e}")
+
 else:
-    st.info('Upload a file to begin analysis.')
+
+    st.info("Upload a file to begin analysis.")
