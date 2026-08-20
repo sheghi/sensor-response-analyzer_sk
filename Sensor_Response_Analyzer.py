@@ -21,10 +21,14 @@ def calc_metrics(df):
 
     df.columns = [str(c).lower().strip() for c in df.columns]
 
-    if "time" not in df.columns or "signal" not in df.columns:
-        raise ValueError(
-            "File must contain columns named 'time' and 'signal'"
-        )
+    st.write("Columns detected:", list(df.columns))
+    st.write("Rows loaded:", len(df))
+
+    if "time" not in df.columns:
+        raise ValueError("Column 'time' not found")
+
+    if "signal" not in df.columns:
+        raise ValueError("Column 'signal' not found")
 
     time = pd.to_numeric(
         df["time"],
@@ -41,8 +45,10 @@ def calc_metrics(df):
     time = time[mask]
     signal = signal[mask]
 
-    if len(time) < 10:
-        raise ValueError("Not enough valid data points")
+    st.write("Valid points:", len(time))
+
+    if len(time) == 0:
+        raise ValueError("No valid numeric data found")
 
     baseline = np.mean(signal[:50])
 
@@ -50,7 +56,7 @@ def calc_metrics(df):
 
     peak_idx = np.argmax(signal)
 
-    peak_time = time[peak_idx]
+    peak_time = float(time[peak_idx])
 
     amplitude = peak - baseline
 
@@ -77,15 +83,7 @@ def calc_metrics(df):
         else np.nan
     )
 
-    rms_noise = float(
-        np.std(signal[:50])
-    )
-
-    overshoot = (
-        ((peak - signal[-1]) / peak) * 100
-        if peak != 0
-        else 0
-    )
+    rms_noise = float(np.std(signal[:50]))
 
     return {
         "Baseline": baseline,
@@ -97,7 +95,6 @@ def calc_metrics(df):
         "T90": t90,
         "T95": t95,
         "Rise Time": rise_time,
-        "Overshoot (%)": overshoot,
         "RMS Noise": rms_noise
     }
 
@@ -108,8 +105,16 @@ if uploaded:
 
         if uploaded.name.endswith(".csv"):
             df = pd.read_csv(uploaded)
+
         else:
-            df = pd.read_excel(uploaded)
+            df = pd.read_excel(
+                uploaded,
+                sheet_name=0,
+                header=0
+            )
+
+        st.subheader("Data Preview")
+        st.dataframe(df.head(20))
 
         metrics = calc_metrics(df)
 
@@ -119,12 +124,10 @@ if uploaded:
 
         for i, (name, value) in enumerate(metrics.items()):
 
-            display = (
-                f"{value:.4f}"
-                if isinstance(value, (int, float, np.floating))
-                and not np.isnan(value)
-                else str(value)
-            )
+            if isinstance(value, (int, float, np.floating)):
+                display = f"{value:.4f}"
+            else:
+                display = str(value)
 
             cols[i % 4].metric(
                 name,
@@ -145,12 +148,6 @@ if uploaded:
 
         st.plotly_chart(
             fig,
-            use_container_width=True
-        )
-
-        st.subheader("Data Preview")
-        st.dataframe(
-            df.head(100),
             use_container_width=True
         )
 
@@ -180,7 +177,7 @@ if uploaded:
 
     except Exception as e:
 
-        st.error(f"Error: {e}")
+        st.error(f"Error: {str(e)}")
 
 else:
 
