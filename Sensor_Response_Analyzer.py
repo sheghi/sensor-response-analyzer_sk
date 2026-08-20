@@ -51,38 +51,46 @@ def detect_cycles(signal):
 
     smoothed = smooth_signal(signal)
 
-    baseline = np.percentile(
-        smoothed,
-        10
-    )
+    grad = np.gradient(smoothed)
 
-    plateau = np.percentile(
-        smoothed,
-        90
-    )
+    grad_std = np.std(grad)
 
-    threshold = baseline + (
-        0.2 * (plateau - baseline)
-    )
-
-    active = smoothed > threshold
-
-    rises = np.where(
-        (active[1:] == True)
-        & (active[:-1] == False)
+    rise_points = np.where(
+        grad > (3 * grad_std)
     )[0]
 
-    falls = np.where(
-        (active[1:] == False)
-        & (active[:-1] == True)
+    fall_points = np.where(
+        grad < (-3 * grad_std)
     )[0]
+
+    if len(rise_points) == 0:
+        return []
+
+    rises = [rise_points[0]]
+
+    for p in rise_points[1:]:
+
+        if p - rises[-1] > 500:
+            rises.append(p)
+
+    falls = []
+
+    if len(fall_points) > 0:
+
+        falls.append(fall_points[0])
+
+        for p in fall_points[1:]:
+
+            if p - falls[-1] > 500:
+                falls.append(p)
 
     cycles = []
 
     for rise in rises:
 
-        candidates = falls[
-            falls > rise
+        candidates = [
+            f for f in falls
+            if f > rise
         ]
 
         if len(candidates) == 0:
@@ -90,7 +98,8 @@ def detect_cycles(signal):
 
         fall = candidates[0]
 
-        if (fall - rise) > 300:
+        if (fall - rise) > 100:
+
             cycles.append(
                 (rise, fall)
             )
@@ -108,36 +117,11 @@ def analyse_cycle(
 
     smoothed = smooth_signal(signal)
 
-    baseline = np.median(
-        smoothed[
-            max(0, start - 300):start
-        ]
-    )
-
-    plateau_start = start + int(
-        0.4 * (end - start)
-    )
-
-    plateau_end = start + int(
-        0.8 * (end - start)
-    )
-
-    stable = np.median(
-        smoothed[
-            plateau_start:plateau_end
-        ]
-    )
-
-    delta = stable - baseline
-
-    if delta <= 0:
-        return None
-
-    # ------------------------
-    # GAS ON DETECTION
-    # ------------------------
-
     grad = np.gradient(smoothed)
+
+    # -------------------------
+    # GAS ON DETECTION
+    # -------------------------
 
     rise_window_start = max(
         0,
@@ -145,7 +129,7 @@ def analyse_cycle(
     )
 
     rise_window_end = min(
-        len(smoothed),
+        len(signal),
         start + 200
     )
 
@@ -153,18 +137,123 @@ def analyse_cycle(
         rise_window_start:rise_window_end
     ]
 
-    gas_on_idx = (
+    max_grad_idx = (
         np.argmax(rise_grad)
         + rise_window_start
     )
+
+    rise_threshold = (
+        0.05 *
+        np.max(rise_grad)
+    )
+
+    gas_on_idx = max_grad_idx
+
+    while (
+        gas_on_idx > rise_window_start
+        and grad[gas_on_idx]
+        > rise_threshold
+    ):
+        gas_on_idx -= 1
 
     gas_on_time = time[
         gas_on_idx
     ]
 
-    # ------------------------
+    # -------------------------
+    # GAS OFF DETECTION
+    # -------------------------
+
+    fall_window_start = max(
+        gas_on_idx + 200,
+        start
+    )
+
+    fall_window_end = min(
+        len(signal),
+        end + 300
+    )
+
+    fall_grad = grad[
+        fall_window_start:
+        fall_window_end
+    ]
+
+    min_grad_idx = (
+        np.argmin(fall_grad)
+        + fall_window_start
+    )
+
+    fall_threshold = (
+        0.05 *
+        abs(np.min(fall_grad))
+    )
+
+    gas_off_idx = min_grad_idx
+
+    while (
+        gas_off_idx > fall_window_start
+        and abs(
+            grad[gas_off_idx]
+        ) > fall_threshold
+    ):
+        gas_off_idx -= 1
+
+    gas_off_time = time[
+        gas_off_idx
+    ]
+
+    # -------------------------
+    # BASELINE
+    # -------------------------
+
+    baseline = np.median(
+        smoothed[
+            max(0, gas_on_idx - 300):
+            gas_on_idx
+        ]
+    )
+
+    plateau_start = min(
+        gas_on_idx + 150,
+        len(smoothed) - 1
+    )
+
+    plateau_end = max(
+        plateau_start + 50,
+        gas_off_idx - 150
+    )
+
+    plateau_end = min(
+        plateau_end,
+        len(smoothed)
+    )
+
+    plateau = np.median(
+        smoothed[
+            plateau_start:
+            plateau_end
+        ]
+    )
+
+    delta = plateau - baseline
+
+    if delta <= 0:
+        return None
+
+    # -------------------------
     # RESPONSE
-    # ------------------------
+    # -------------------------
+
+    response_signal = smoothed[
+        gas_on_idx:
+        gas_off_idx
+    ]
+
+    response_time = time[
+        gas_on_idx:
+        gas_off_idx
+    ]
 
     target30 = baseline + (
         0.30 * delta
@@ -173,14 +262,6 @@ def analyse_cycle(
     target90 = baseline + (
         0.90 * delta
     )
-
-    response_signal = smoothed[
-        gas_on_idx:end
-    ]
-
-    response_time = time[
-        gas_on_idx:end
-    ]
 
     idx30 = np.where(
         response_signal >= target30
@@ -205,36 +286,9 @@ def analyse_cycle(
             - gas_on_time
         )
 
-    # ------------------------
-    # GAS OFF DETECTION
-    # ------------------------
-
-    fall_window_start = max(
-        plateau_start,
-        start
-    )
-
-    fall_window_end = min(
-        len(smoothed),
-        end + 300
-    )
-
-    fall_grad = grad[
-        fall_window_start:fall_window_end
-    ]
-
-    gas_off_idx = (
-        np.argmin(fall_grad)
-        + fall_window_start
-    )
-
-    gas_off_time = time[
-        gas_off_idx
-    ]
-
-    # ------------------------
+    # -------------------------
     # RECOVERY
-    # ------------------------
+    # -------------------------
 
     recovery_signal = smoothed[
         gas_off_idx:
@@ -244,12 +298,10 @@ def analyse_cycle(
         gas_off_idx:
     ]
 
-    # 60% recovered
     target60 = baseline + (
         0.40 * delta
     )
 
-    # 90% recovered
     target10 = baseline + (
         0.10 * delta
     )
@@ -277,24 +329,27 @@ def analyse_cycle(
             - gas_off_time
         )
 
+    print(
+        f"Cycle {cycle_no}: "
+        f"T30={t30:.2f}, "
+        f"T90={t90:.2f}, "
+        f"T60={t60:.2f}, "
+        f"T10={t10:.2f}"
+    )
+
     return {
         "Cycle": cycle_no,
-        "T30 Response (s)": round(
-            float(t30),
-            2
-        ) if not np.isnan(t30) else np.nan,
-        "T90 Response (s)": round(
-            float(t90),
-            2
-        ) if not np.isnan(t90) else np.nan,
-        "T60 Recovery (s)": round(
-            float(t60),
-            2
-        ) if not np.isnan(t60) else np.nan,
-        "T10 Recovery (s)": round(
-            float(t10),
-            2
-        ) if not np.isnan(t10) else np.nan
+        "T30 Response (s)": round(float(t30), 2)
+        if not np.isnan(t30) else np.nan,
+
+        "T90 Response (s)": round(float(t90), 2)
+        if not np.isnan(t90) else np.nan,
+
+        "T60 Recovery (s)": round(float(t60), 2)
+        if not np.isnan(t60) else np.nan,
+
+        "T10 Recovery (s)": round(float(t10), 2)
+        if not np.isnan(t10) else np.nan
     }
 
 
@@ -382,32 +437,16 @@ if uploaded:
                 "T10 Recovery (s)"
             ],
             "Average": [
-                results_df[
-                    "T30 Response (s)"
-                ].mean(),
-                results_df[
-                    "T90 Response (s)"
-                ].mean(),
-                results_df[
-                    "T60 Recovery (s)"
-                ].mean(),
-                results_df[
-                    "T10 Recovery (s)"
-                ].mean()
+                results_df["T30 Response (s)"].mean(),
+                results_df["T90 Response (s)"].mean(),
+                results_df["T60 Recovery (s)"].mean(),
+                results_df["T10 Recovery (s)"].mean()
             ],
             "Std Dev": [
-                results_df[
-                    "T30 Response (s)"
-                ].std(),
-                results_df[
-                    "T90 Response (s)"
-                ].std(),
-                results_df[
-                    "T60 Recovery (s)"
-                ].std(),
-                results_df[
-                    "T10 Recovery (s)"
-                ].std()
+                results_df["T30 Response (s)"].std(),
+                results_df["T90 Response (s)"].std(),
+                results_df["T60 Recovery (s)"].std(),
+                results_df["T10 Recovery (s)"].std()
             ]
         })
 
