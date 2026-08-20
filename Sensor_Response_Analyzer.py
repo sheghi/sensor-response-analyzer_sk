@@ -20,7 +20,9 @@ uploaded = st.file_uploader(
 def prepare_time(df):
 
     try:
-        t = pd.to_datetime(df["time"].astype(str))
+        t = pd.to_datetime(
+            df["time"].astype(str)
+        )
 
         elapsed = (
             t - t.iloc[0]
@@ -36,7 +38,10 @@ def smooth_signal(signal):
 
     return (
         pd.Series(signal)
-        .rolling(window=21, center=True)
+        .rolling(
+            window=21,
+            center=True
+        )
         .mean()
         .bfill()
         .ffill()
@@ -48,8 +53,15 @@ def detect_cycles(signal):
 
     smoothed = smooth_signal(signal)
 
-    baseline = np.percentile(smoothed, 10)
-    plateau = np.percentile(smoothed, 90)
+    baseline = np.percentile(
+        smoothed,
+        10
+    )
+
+    plateau = np.percentile(
+        smoothed,
+        90
+    )
 
     threshold = baseline + (
         0.2 * (plateau - baseline)
@@ -57,22 +69,22 @@ def detect_cycles(signal):
 
     active = smoothed > threshold
 
-    rising = np.where(
+    rises = np.where(
         (active[1:] == True)
         & (active[:-1] == False)
     )[0]
 
-    falling = np.where(
+    falls = np.where(
         (active[1:] == False)
         & (active[:-1] == True)
     )[0]
 
     cycles = []
 
-    for rise in rising:
+    for rise in rises:
 
-        candidates = falling[
-            falling > rise
+        candidates = falls[
+            falls > rise
         ]
 
         if len(candidates) == 0:
@@ -81,7 +93,9 @@ def detect_cycles(signal):
         fall = candidates[0]
 
         if (fall - rise) > 300:
-            cycles.append((rise, fall))
+            cycles.append(
+                (rise, fall)
+            )
 
     return cycles
 
@@ -96,10 +110,15 @@ def analyse_cycle(
 
     smoothed = smooth_signal(signal)
 
+    baseline_region = smoothed[
+        max(0, start - 300):start
+    ]
+
+    if len(baseline_region) < 50:
+        return None
+
     baseline = np.median(
-        smoothed[
-            max(0, start - 300):start
-        ]
+        baseline_region
     )
 
     plateau_start = start + int(
@@ -121,14 +140,19 @@ def analyse_cycle(
     if delta <= 0:
         return None
 
-    # =====================
+    # -------------------
     # RESPONSE
-    # =====================
+    # -------------------
 
     gas_on_time = time[start]
 
-    response_signal = smoothed[start:end]
-    response_time = time[start:end]
+    response_signal = smoothed[
+        start:end
+    ]
+
+    response_time = time[
+        start:end
+    ]
 
     target30 = baseline + (
         0.30 * delta
@@ -146,66 +170,57 @@ def analyse_cycle(
         response_signal >= target90
     )[0]
 
-    t30_response = np.nan
-    t90_response = np.nan
-
     if len(idx30) > 0:
         t30_response = (
             response_time[idx30[0]]
             - gas_on_time
         )
+    else:
+        t30_response = np.nan
 
     if len(idx90) > 0:
         t90_response = (
             response_time[idx90[0]]
             - gas_on_time
         )
+    else:
+        t90_response = np.nan
 
-    # =====================
+    # -------------------
     # RECOVERY
-    # =====================
+    # -------------------
 
-    fall_window_start = max(
+    gas_off_idx = max(
         start,
-        end - 200
-    )
-
-    fall_window_end = min(
-        len(smoothed),
-        end + 300
-    )
-
-    fall_region = smoothed[
-        fall_window_start:fall_window_end
-    ]
-
-    gradient = np.gradient(
-        fall_region
-    )
-
-    fall_start_idx = (
-        np.argmin(gradient)
-        + fall_window_start
+        plateau_end - 150
     )
 
     gas_off_time = time[
-        fall_start_idx
+        gas_off_idx
     ]
 
     recovery_signal = smoothed[
-        fall_start_idx:
+        gas_off_idx:
+        min(
+            len(smoothed),
+            gas_off_idx + 3000
+        )
     ]
 
     recovery_time = time[
-        fall_start_idx:
+        gas_off_idx:
+        min(
+            len(time),
+            gas_off_idx + 3000
+        )
     ]
 
-    # recovery towards baseline
-
+    # 60% recovered
     target60 = baseline + (
         0.40 * delta
     )
 
+    # 90% recovered
     target10 = baseline + (
         0.10 * delta
     )
@@ -218,20 +233,57 @@ def analyse_cycle(
         recovery_signal <= target10
     )[0]
 
-    t60_recovery = np.nan
-    t10_recovery = np.nan
+    # fallback if recovery starts too late
+    if len(idx60) > 0 and idx60[0] == 0:
+
+        gas_off_idx = max(
+            start,
+            gas_off_idx - 150
+        )
+
+        gas_off_time = time[
+            gas_off_idx
+        ]
+
+        recovery_signal = smoothed[
+            gas_off_idx:
+            min(
+                len(smoothed),
+                gas_off_idx + 3000
+            )
+        ]
+
+        recovery_time = time[
+            gas_off_idx:
+            min(
+                len(time),
+                gas_off_idx + 3000
+            )
+        ]
+
+        idx60 = np.where(
+            recovery_signal <= target60
+        )[0]
+
+        idx10 = np.where(
+            recovery_signal <= target10
+        )[0]
 
     if len(idx60) > 0:
         t60_recovery = (
             recovery_time[idx60[0]]
             - gas_off_time
         )
+    else:
+        t60_recovery = np.nan
 
     if len(idx10) > 0:
         t10_recovery = (
             recovery_time[idx10[0]]
             - gas_off_time
         )
+    else:
+        t10_recovery = np.nan
 
     return {
         "Cycle": cycle_no,
@@ -268,6 +320,12 @@ if uploaded:
             for c in df.columns
         ]
 
+        if "signal" not in df.columns:
+            st.error(
+                "Column 'signal' not found"
+            )
+            st.stop()
+
         signal = pd.to_numeric(
             df["signal"],
             errors="coerce"
@@ -275,7 +333,9 @@ if uploaded:
 
         mask = signal.notna()
 
-        signal = signal[mask].to_numpy()
+        signal = signal[
+            mask
+        ].to_numpy()
 
         df = df.loc[mask]
 
@@ -289,7 +349,10 @@ if uploaded:
 
         results = []
 
-        for i, (start, end) in enumerate(
+        for cycle_no, (
+            start,
+            end
+        ) in enumerate(
             cycles,
             start=1
         ):
@@ -299,19 +362,30 @@ if uploaded:
                 time,
                 start,
                 end,
-                i
+                cycle_no
             )
 
             if result is not None:
                 results.append(result)
 
-        results_df = pd.DataFrame(results)
+        if len(results) == 0:
+            st.error(
+                "No valid cycles detected."
+            )
+            st.stop()
+
+        results_df = pd.DataFrame(
+            results
+        )
 
         st.subheader(
             "Cycle Results"
         )
 
-        st.dataframe(results_df)
+        st.dataframe(
+            results_df,
+            use_container_width=True
+        )
 
         summary_df = pd.DataFrame({
             "Metric": [
@@ -338,7 +412,10 @@ if uploaded:
             "Average Results"
         )
 
-        st.dataframe(summary_df)
+        st.dataframe(
+            summary_df,
+            use_container_width=True
+        )
 
         plot_df = pd.DataFrame({
             "Time (s)": time,
@@ -397,5 +474,6 @@ if uploaded:
         st.error(str(e))
 
 else:
-    st.info("Upload a file to begin analysis.")
-
+    st.info(
+        "Upload a file to begin analysis."
+    )
