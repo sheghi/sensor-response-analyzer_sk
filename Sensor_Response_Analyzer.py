@@ -92,24 +92,37 @@ def detect_cycles(signal):
     return cycles
 
 
-def analyse_cycle(signal, time, start, end, cycle_no):
+def analyse_cycle(
+    signal,
+    time,
+    start,
+    end,
+    cycle_no
+):
 
     smoothed = smooth_signal(signal)
 
+    # ---------------------
     # BASELINE
+    # ---------------------
 
     baseline_region = smoothed[
         max(0, start - 300):start
     ]
 
+    if len(baseline_region) < 50:
+        return None
+
     baseline = np.median(
         baseline_region
     )
 
-    # PLATEAU
+    # ---------------------
+    # STABLE PLATEAU
+    # ---------------------
 
     plateau_start = start + int(
-        0.5 * (end - start)
+        0.4 * (end - start)
     )
 
     plateau_end = start + int(
@@ -127,9 +140,9 @@ def analyse_cycle(signal, time, start, end, cycle_no):
     if delta <= 0:
         return None
 
-    # =====================================
+    # ---------------------
     # RESPONSE
-    # =====================================
+    # ---------------------
 
     gas_on_time = time[start]
 
@@ -173,30 +186,48 @@ def analyse_cycle(signal, time, start, end, cycle_no):
             - gas_on_time
         )
 
-    # =====================================
+    # ---------------------
     # RECOVERY
-    # =====================================
+    # ---------------------
 
-    # Start recovery near end of plateau
-    gas_off_idx = start + int(
-        0.85 * (end - start)
+    gradient = np.gradient(smoothed)
+
+    search_start = max(
+        start + int(
+            0.6 * (end - start)
+        ),
+        start
+    )
+
+    search_end = min(
+        len(smoothed),
+        end + 300
+    )
+
+    grad_region = gradient[
+        search_start:search_end
+    ]
+
+    fall_start = (
+        np.argmin(grad_region)
+        + search_start
     )
 
     gas_off_time = time[
-        gas_off_idx
+        fall_start
     ]
 
     recovery_signal = smoothed[
-        gas_off_idx:min(
+        fall_start:min(
             len(smoothed),
-            gas_off_idx + 2000
+            fall_start + 2500
         )
     ]
 
     recovery_time = time[
-        gas_off_idx:min(
+        fall_start:min(
             len(time),
-            gas_off_idx + 2000
+            fall_start + 2500
         )
     ]
 
@@ -269,7 +300,7 @@ if uploaded:
 
         if "signal" not in df.columns:
             st.error(
-                "signal column not found"
+                "Column 'signal' not found"
             )
             st.stop()
 
@@ -296,7 +327,10 @@ if uploaded:
 
         results = []
 
-        for i, (start, end) in enumerate(
+        for cycle_no, (
+            start,
+            end
+        ) in enumerate(
             cycles,
             start=1
         ):
@@ -306,7 +340,7 @@ if uploaded:
                 time,
                 start,
                 end,
-                i
+                cycle_no
             )
 
             if result is not None:
@@ -320,9 +354,13 @@ if uploaded:
 
             st.stop()
 
-        results_df = pd.DataFrame(results)
+        results_df = pd.DataFrame(
+            results
+        )
 
-        st.subheader("Cycle Results")
+        st.subheader(
+            "Cycle Results"
+        )
 
         st.dataframe(
             results_df,
@@ -350,7 +388,9 @@ if uploaded:
             ]
         })
 
-        st.subheader("Average Results")
+        st.subheader(
+            "Average Results"
+        )
 
         st.dataframe(
             summary_df,
