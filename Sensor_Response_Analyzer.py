@@ -24,11 +24,9 @@ def prepare_time(df):
             df["time"].astype(str)
         )
 
-        elapsed = (
+        return (
             t - t.iloc[0]
-        ).dt.total_seconds()
-
-        return elapsed.to_numpy()
+        ).dt.total_seconds().to_numpy()
 
     except:
         return np.arange(len(df))
@@ -110,23 +108,18 @@ def analyse_cycle(
 
     smoothed = smooth_signal(signal)
 
-    baseline_region = smoothed[
-        max(0, start - 300):start
-    ]
-
-    if len(baseline_region) < 50:
-        return None
-
     baseline = np.median(
-        baseline_region
+        smoothed[
+            max(0, start - 300):start
+        ]
     )
 
     plateau_start = start + int(
-        0.40 * (end - start)
+        0.4 * (end - start)
     )
 
     plateau_end = start + int(
-        0.75 * (end - start)
+        0.8 * (end - start)
     )
 
     stable = np.median(
@@ -140,19 +133,38 @@ def analyse_cycle(
     if delta <= 0:
         return None
 
-    # -------------------
+    # ------------------------
+    # GAS ON DETECTION
+    # ------------------------
+
+    grad = np.gradient(smoothed)
+
+    rise_window_start = max(
+        0,
+        start - 200
+    )
+
+    rise_window_end = min(
+        len(smoothed),
+        start + 200
+    )
+
+    rise_grad = grad[
+        rise_window_start:rise_window_end
+    ]
+
+    gas_on_idx = (
+        np.argmax(rise_grad)
+        + rise_window_start
+    )
+
+    gas_on_time = time[
+        gas_on_idx
+    ]
+
+    # ------------------------
     # RESPONSE
-    # -------------------
-
-    gas_on_time = time[start]
-
-    response_signal = smoothed[
-        start:end
-    ]
-
-    response_time = time[
-        start:end
-    ]
+    # ------------------------
 
     target30 = baseline + (
         0.30 * delta
@@ -162,6 +174,14 @@ def analyse_cycle(
         0.90 * delta
     )
 
+    response_signal = smoothed[
+        gas_on_idx:end
+    ]
+
+    response_time = time[
+        gas_on_idx:end
+    ]
+
     idx30 = np.where(
         response_signal >= target30
     )[0]
@@ -170,49 +190,58 @@ def analyse_cycle(
         response_signal >= target90
     )[0]
 
+    t30 = np.nan
+    t90 = np.nan
+
     if len(idx30) > 0:
-        t30_response = (
+        t30 = (
             response_time[idx30[0]]
             - gas_on_time
         )
-    else:
-        t30_response = np.nan
 
     if len(idx90) > 0:
-        t90_response = (
+        t90 = (
             response_time[idx90[0]]
             - gas_on_time
         )
-    else:
-        t90_response = np.nan
 
-    # -------------------
-    # RECOVERY
-    # -------------------
+    # ------------------------
+    # GAS OFF DETECTION
+    # ------------------------
 
-    gas_off_idx = max(
-        start,
-        plateau_end - 150
+    fall_window_start = max(
+        plateau_start,
+        start
+    )
+
+    fall_window_end = min(
+        len(smoothed),
+        end + 300
+    )
+
+    fall_grad = grad[
+        fall_window_start:fall_window_end
+    ]
+
+    gas_off_idx = (
+        np.argmin(fall_grad)
+        + fall_window_start
     )
 
     gas_off_time = time[
         gas_off_idx
     ]
 
+    # ------------------------
+    # RECOVERY
+    # ------------------------
+
     recovery_signal = smoothed[
         gas_off_idx:
-        min(
-            len(smoothed),
-            gas_off_idx + 3000
-        )
     ]
 
     recovery_time = time[
         gas_off_idx:
-        min(
-            len(time),
-            gas_off_idx + 3000
-        )
     ]
 
     # 60% recovered
@@ -233,76 +262,39 @@ def analyse_cycle(
         recovery_signal <= target10
     )[0]
 
-    # fallback if recovery starts too late
-    if len(idx60) > 0 and idx60[0] == 0:
-
-        gas_off_idx = max(
-            start,
-            gas_off_idx - 150
-        )
-
-        gas_off_time = time[
-            gas_off_idx
-        ]
-
-        recovery_signal = smoothed[
-            gas_off_idx:
-            min(
-                len(smoothed),
-                gas_off_idx + 3000
-            )
-        ]
-
-        recovery_time = time[
-            gas_off_idx:
-            min(
-                len(time),
-                gas_off_idx + 3000
-            )
-        ]
-
-        idx60 = np.where(
-            recovery_signal <= target60
-        )[0]
-
-        idx10 = np.where(
-            recovery_signal <= target10
-        )[0]
+    t60 = np.nan
+    t10 = np.nan
 
     if len(idx60) > 0:
-        t60_recovery = (
+        t60 = (
             recovery_time[idx60[0]]
             - gas_off_time
         )
-    else:
-        t60_recovery = np.nan
 
     if len(idx10) > 0:
-        t10_recovery = (
+        t10 = (
             recovery_time[idx10[0]]
             - gas_off_time
         )
-    else:
-        t10_recovery = np.nan
 
     return {
         "Cycle": cycle_no,
         "T30 Response (s)": round(
-            t30_response,
+            float(t30),
             2
-        ),
+        ) if not np.isnan(t30) else np.nan,
         "T90 Response (s)": round(
-            t90_response,
+            float(t90),
             2
-        ),
+        ) if not np.isnan(t90) else np.nan,
         "T60 Recovery (s)": round(
-            t60_recovery,
+            float(t60),
             2
-        ),
+        ) if not np.isnan(t60) else np.nan,
         "T10 Recovery (s)": round(
-            t10_recovery,
+            float(t10),
             2
-        )
+        ) if not np.isnan(t10) else np.nan
     }
 
 
@@ -349,15 +341,12 @@ if uploaded:
 
         results = []
 
-        for cycle_no, (
-            start,
-            end
-        ) in enumerate(
+        for cycle_no, (start, end) in enumerate(
             cycles,
             start=1
         ):
 
-            result = analyse_cycle(
+            res = analyse_cycle(
                 signal,
                 time,
                 start,
@@ -365,8 +354,8 @@ if uploaded:
                 cycle_no
             )
 
-            if result is not None:
-                results.append(result)
+            if res is not None:
+                results.append(res)
 
         if len(results) == 0:
             st.error(
@@ -374,9 +363,7 @@ if uploaded:
             )
             st.stop()
 
-        results_df = pd.DataFrame(
-            results
-        )
+        results_df = pd.DataFrame(results)
 
         st.subheader(
             "Cycle Results"
@@ -395,16 +382,32 @@ if uploaded:
                 "T10 Recovery (s)"
             ],
             "Average": [
-                results_df["T30 Response (s)"].mean(),
-                results_df["T90 Response (s)"].mean(),
-                results_df["T60 Recovery (s)"].mean(),
-                results_df["T10 Recovery (s)"].mean()
+                results_df[
+                    "T30 Response (s)"
+                ].mean(),
+                results_df[
+                    "T90 Response (s)"
+                ].mean(),
+                results_df[
+                    "T60 Recovery (s)"
+                ].mean(),
+                results_df[
+                    "T10 Recovery (s)"
+                ].mean()
             ],
             "Std Dev": [
-                results_df["T30 Response (s)"].std(),
-                results_df["T90 Response (s)"].std(),
-                results_df["T60 Recovery (s)"].std(),
-                results_df["T10 Recovery (s)"].std()
+                results_df[
+                    "T30 Response (s)"
+                ].std(),
+                results_df[
+                    "T90 Response (s)"
+                ].std(),
+                results_df[
+                    "T60 Recovery (s)"
+                ].std(),
+                results_df[
+                    "T10 Recovery (s)"
+                ].std()
             ]
         })
 
@@ -471,9 +474,11 @@ if uploaded:
         )
 
     except Exception as e:
+
         st.error(str(e))
 
 else:
+
     st.info(
         "Upload a file to begin analysis."
     )
