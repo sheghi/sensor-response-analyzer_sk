@@ -4,6 +4,8 @@ import numpy as np
 import plotly.express as px
 from io import BytesIO
 
+SAMPLING_INTERVAL = 10  # seconds
+
 st.set_page_config(
     page_title="Sensor Response Analyzer",
     layout="wide"
@@ -21,39 +23,20 @@ def calc_metrics(df):
 
     df.columns = [str(c).lower().strip() for c in df.columns]
 
-    if "time" not in df.columns:
-        raise ValueError("Column 'time' not found")
-
     if "signal" not in df.columns:
         raise ValueError("Column 'signal' not found")
 
-    # Convert signal to numeric
     signal = pd.to_numeric(
         df["signal"],
         errors="coerce"
-    )
+    ).to_numpy()
 
-    # Convert Excel time column to datetime
-    time_dt = pd.to_datetime(
-        df["time"].astype(str),
-        errors="coerce"
-    )
-
-    mask = (
-        signal.notna()
-        & time_dt.notna()
-    )
-
-    signal = signal[mask].to_numpy()
-    time_dt = time_dt[mask]
+    signal = signal[~np.isnan(signal)]
 
     if len(signal) == 0:
-        raise ValueError("No valid data found")
+        raise ValueError("No signal data found")
 
-    # Convert to elapsed seconds
-    time = (
-        time_dt - time_dt.iloc[0]
-    ).dt.total_seconds().to_numpy()
+    time = np.arange(len(signal)) * SAMPLING_INTERVAL
 
     baseline = np.mean(signal[:50])
 
@@ -88,20 +71,20 @@ def calc_metrics(df):
         else np.nan
     )
 
-    rms_noise = float(
-        np.std(signal[:50])
-    )
+    rms_noise = float(np.std(signal[:50]))
 
     return {
         "Baseline": baseline,
         "Peak": peak,
         "Peak Time (s)": peak_time,
+        "Peak Time (min)": peak_time / 60,
         "Amplitude": amplitude,
         "T10 (s)": t10,
         "T50 (s)": t50,
         "T90 (s)": t90,
         "T95 (s)": t95,
         "Rise Time (s)": rise_time,
+        "Rise Time (min)": rise_time / 60,
         "RMS Noise": rms_noise
     }
 
@@ -123,43 +106,38 @@ if uploaded:
 
         for i, (name, value) in enumerate(metrics.items()):
 
+            if isinstance(value, (int, float, np.floating)):
+                display = f"{value:.2f}"
+            else:
+                display = str(value)
+
             cols[i % 4].metric(
                 name,
-                f"{value:.4f}"
+                display
             )
 
-        # Plot using elapsed seconds
-        plot_df = df.copy()
-
-        plot_df.columns = [
+        df.columns = [
             str(c).lower().strip()
-            for c in plot_df.columns
+            for c in df.columns
         ]
 
-        plot_df["time"] = pd.to_datetime(
-            plot_df["time"].astype(str),
+        signal = pd.to_numeric(
+            df["signal"],
             errors="coerce"
         )
 
-        plot_df = plot_df.dropna(
-            subset=["time", "signal"]
-        )
+        signal = signal.dropna().to_numpy()
 
-        plot_df["elapsed_seconds"] = (
-            plot_df["time"]
-            - plot_df["time"].iloc[0]
-        ).dt.total_seconds()
+        plot_df = pd.DataFrame({
+            "Time (s)": np.arange(len(signal)) * SAMPLING_INTERVAL,
+            "Signal": signal
+        })
 
         fig = px.line(
             plot_df,
-            x="elapsed_seconds",
-            y="signal",
+            x="Time (s)",
+            y="Signal",
             title="Sensor Response Curve"
-        )
-
-        fig.update_layout(
-            xaxis_title="Time (s)",
-            yaxis_title="Signal"
         )
 
         st.plotly_chart(
@@ -167,15 +145,7 @@ if uploaded:
             use_container_width=True
         )
 
-        st.subheader("Data Preview")
-        st.dataframe(
-            plot_df.head(50),
-            use_container_width=True
-        )
-
-        export_df = pd.DataFrame(
-            [metrics]
-        )
+        export_df = pd.DataFrame([metrics])
 
         buffer = BytesIO()
 
