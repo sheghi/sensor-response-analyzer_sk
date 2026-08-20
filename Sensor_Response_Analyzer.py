@@ -2,83 +2,68 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+from scipy.signal import find_peaks
 from io import BytesIO
 
-# 10 samples per second
-SAMPLE_INTERVAL = 0.1  # seconds/sample
-
 st.set_page_config(
-    page_title="Multi-Cycle Sensor Analyzer",
+    page_title="Sensor Response Analyzer",
     layout="wide"
 )
 
 st.title("Multi-Cycle Sensor Response Analyzer")
 
 uploaded = st.file_uploader(
-    "Upload CSV or Excel file",
-    type=["csv", "xlsx"]
+    "Upload Excel or CSV file",
+    type=["xlsx", "csv"]
 )
 
 
-def find_cycles(signal):
+def prepare_time(df):
 
-    baseline = np.percentile(signal, 10)
-    high = np.percentile(signal, 90)
+    try:
+        t = pd.to_datetime(df["time"].astype(str))
+        elapsed = (t - t.iloc[0]).dt.total_seconds()
+        return elapsed.to_numpy()
 
-    threshold = baseline + 0.5 * (high - baseline)
+    except Exception:
+        return np.arange(len(df))
 
-    active = signal > threshold
 
-    starts = np.where(np.diff(active.astype(int)) == 1)[0]
-    ends = np.where(np.diff(active.astype(int)) == -1)[0]
+def calc_cycle(signal, time, peak_idx, cycle_no):
 
-    if len(starts) == 0 or len(ends) == 0:
-        return []
+    peak = signal[peak_idx]
 
-    if ends[0] < starts[0]:
-        ends = ends[1:]
+    left = max(0, peak_idx - 200)
+    right = min(len(signal) - 1, peak_idx + 200)
 
-    n = min(len(starts), len(ends))
-
-    return list(zip(starts[:n], endscalc_cycle_metrics(signal, start, end, cycle_number):
-
-    baseline_region = signal[max(0, start - 50):start]
-
-    if len(baseline_region) < 10:
-        return None
-
-    baseline = np.mean(baseline_region)
-
-    segment = signal[start:end]
-
-    if len(segment) < 20:
-        return None
-
-    peak = np.max(segment)
+    baseline = np.min(signal[left:peak_idx])
 
     amplitude = peak - baseline
 
     if amplitude <= 0:
         return None
 
-    time = np.arange(len(signal)) * SAMPLE_INTERVAL
-    seg_time = time[start:end]
+    target10 = baseline + 0.10 * amplitude
+    target50 = baseline + 0.50 * amplitude
+    target90 = baseline + 0.90 * amplitude
+    target95 = baseline + 0.95 * amplitude
 
-    def crossing(frac):
+    rise_region = signal[left:peak_idx + 1]
+    rise_time_region = time[left:peak_idx + 1]
 
-        target = baseline + amplitude * frac
+    def first_cross(target):
 
-        idx = np.where(segment >= target)[0]
+        idx = np.where(rise_region >= target)[0]
 
         if len(idx) == 0:
             return np.nan
 
-        return float(seg_time[idx[0]])
+        return float(rise_time_region[idx[0]])
 
-    t10 = crossing(0.10)
-    t50 = crossing(0.50)
-    t90 = crossing(0.90)
-    t95 = crossing(0.95)
+    t10 = first_cross(target10)
+    t50 = first_cross(target50)
+    t90 = first_cross(target90)
+    t95 = first_cross(target95)
 
     rise_time = np.nan
 
@@ -86,7 +71,7 @@ def find_cycles(signal):
         rise_time = t90 - t10
 
     return {
-        "Cycle": cycle_number,
+        "Cycle": cycle_no,
         "Baseline": baseline,
         "Peak": peak,
         "Amplitude": amplitude,
@@ -116,40 +101,52 @@ if uploaded:
             st.error("Column 'signal' not found")
             st.stop()
 
+        if "time" not in df.columns:
+            st.error("Column 'time' not found")
+            st.stop()
+
         signal = pd.to_numeric(
             df["signal"],
             errors="coerce"
         )
 
-        signal = signal.dropna().to_numpy()
+        valid = signal.notna()
 
-        if len(signal) == 0:
-            st.error("No valid signal values found")
-            st.stop()
+        signal = signal[valid].to_numpy()
 
-        cycles = find_cycles(signal)
+        df = df.loc[valid]
 
-        if len(cycles) == 0:
-            st.error("No cycles detected")
-            st.stop()
+        time = prepare_time(df)
+
+        # Detect peaks automatically
+        peaks, properties = find_peaks(
+            signal,
+            prominence=0.2,
+            distance=300
+        )
 
         results = []
 
-        for cycle_no, (start, end) in enumerate(cycles, start=1):
+        for cycle_no, peak_idx in enumerate(peaks, start=1):
 
-            metrics = calc_cycle_metrics(
+            result = calc_cycle(
                 signal,
-                start,
-                end,
+                time,
+                peak_idx,
                 cycle_no
             )
 
-            if metrics is not None:
-                results.append(metrics)
+            if result is not None:
+                results.append(result)
+
+        if len(results) == 0:
+            st.error("No cycles detected.")
+            st.stop()
 
         results_df = pd.DataFrame(results)
 
         st.subheader("Cycle Results")
+
         st.dataframe(
             results_df,
             use_container_width=True
@@ -162,17 +159,22 @@ if uploaded:
 
         summary_df = pd.DataFrame({
             "Metric": numeric_cols,
-            "Average": [results_df[c].mean() for c in numeric_cols],
-            "Std Dev": [results_df[c].std() for c in numeric_cols]
+            "Average": [
+                results_df[c].mean()
+                for c in numeric_cols
+            ],
+            "Std Dev": [
+                results_df[c].std()
+                for c in numeric_cols
+            ]
         })
 
         st.subheader("Average Results")
+
         st.dataframe(
             summary_df,
             use_container_width=True
         )
-
-        time = np.arange(len(signal)) * SAMPLE_INTERVAL
 
         plot_df = pd.DataFrame({
             "Time (s)": time,
@@ -186,15 +188,12 @@ if uploaded:
             title="Sensor Response"
         )
 
-        for start, end in cycles:
-
-            fig.add_vrect(
-                x0=start * SAMPLE_INTERVAL,
-                x1=end * SAMPLE_INTERVAL,
-                fillcolor="green",
-                opacity=0.15,
-                line_width=0
-            )
+        fig.add_scatter(
+            x=time[peaks],
+            y=signal[peaks],
+            mode="markers",
+            name="Detected Peaks"
+        )
 
         st.plotly_chart(
             fig,
