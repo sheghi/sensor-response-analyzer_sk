@@ -36,10 +36,7 @@ def smooth_signal(signal):
 
     return (
         pd.Series(signal)
-        .rolling(
-            window=21,
-            center=True
-        )
+        .rolling(window=21, center=True)
         .mean()
         .bfill()
         .ffill()
@@ -51,15 +48,8 @@ def detect_cycles(signal):
 
     smoothed = smooth_signal(signal)
 
-    baseline = np.percentile(
-        smoothed,
-        10
-    )
-
-    plateau = np.percentile(
-        smoothed,
-        90
-    )
+    baseline = np.percentile(smoothed, 10)
+    plateau = np.percentile(smoothed, 90)
 
     threshold = baseline + (
         0.2 * (plateau - baseline)
@@ -91,9 +81,7 @@ def detect_cycles(signal):
         fall = candidates[0]
 
         if (fall - rise) > 300:
-            cycles.append(
-                (rise, fall)
-            )
+            cycles.append((rise, fall))
 
     return cycles
 
@@ -133,19 +121,14 @@ def analyse_cycle(
     if delta <= 0:
         return None
 
-    # ------------------
+    # =====================
     # RESPONSE
-    # ------------------
+    # =====================
 
     gas_on_time = time[start]
 
-    response_signal = smoothed[
-        start:end
-    ]
-
-    response_time = time[
-        start:end
-    ]
+    response_signal = smoothed[start:end]
+    response_time = time[start:end]
 
     target30 = baseline + (
         0.30 * delta
@@ -163,56 +146,66 @@ def analyse_cycle(
         response_signal >= target90
     )[0]
 
-    if len(idx30) == 0:
-        t30_response = np.nan
-    else:
+    t30_response = np.nan
+    t90_response = np.nan
+
+    if len(idx30) > 0:
         t30_response = (
             response_time[idx30[0]]
             - gas_on_time
         )
 
-    if len(idx90) == 0:
-        t90_response = np.nan
-    else:
+    if len(idx90) > 0:
         t90_response = (
             response_time[idx90[0]]
             - gas_on_time
         )
 
-    # ------------------
+    # =====================
     # RECOVERY
-    # ------------------
+    # =====================
 
-    # start recovery timing
-    # at end of stable plateau
+    fall_window_start = max(
+        start,
+        end - 200
+    )
 
-    gas_off_idx = plateau_end
+    fall_window_end = min(
+        len(smoothed),
+        end + 300
+    )
+
+    fall_region = smoothed[
+        fall_window_start:fall_window_end
+    ]
+
+    gradient = np.gradient(
+        fall_region
+    )
+
+    fall_start_idx = (
+        np.argmin(gradient)
+        + fall_window_start
+    )
 
     gas_off_time = time[
-        gas_off_idx
+        fall_start_idx
     ]
 
     recovery_signal = smoothed[
-        gas_off_idx:min(
-            len(smoothed),
-            gas_off_idx + 3000
-        )
+        fall_start_idx:
     ]
 
     recovery_time = time[
-        gas_off_idx:min(
-            len(time),
-            gas_off_idx + 3000
-        )
+        fall_start_idx:
     ]
 
-    # 60% recovered towards baseline
+    # recovery towards baseline
+
     target60 = baseline + (
         0.40 * delta
     )
 
-    # 90% recovered towards baseline
-    # (10% response remaining)
     target10 = baseline + (
         0.10 * delta
     )
@@ -225,17 +218,16 @@ def analyse_cycle(
         recovery_signal <= target10
     )[0]
 
-    if len(idx60) == 0:
-        t60_recovery = np.nan
-    else:
+    t60_recovery = np.nan
+    t10_recovery = np.nan
+
+    if len(idx60) > 0:
         t60_recovery = (
             recovery_time[idx60[0]]
             - gas_off_time
         )
 
-    if len(idx10) == 0:
-        t10_recovery = np.nan
-    else:
+    if len(idx10) > 0:
         t10_recovery = (
             recovery_time[idx10[0]]
             - gas_off_time
@@ -267,24 +259,14 @@ if uploaded:
     try:
 
         if uploaded.name.endswith(".csv"):
-            df = pd.read_csv(
-                uploaded
-            )
+            df = pd.read_csv(uploaded)
         else:
-            df = pd.read_excel(
-                uploaded
-            )
+            df = pd.read_excel(uploaded)
 
         df.columns = [
             str(c).lower().strip()
             for c in df.columns
         ]
-
-        if "signal" not in df.columns:
-            st.error(
-                "Column 'signal' not found"
-            )
-            st.stop()
 
         signal = pd.to_numeric(
             df["signal"],
@@ -293,19 +275,13 @@ if uploaded:
 
         mask = signal.notna()
 
-        signal = signal[
-            mask
-        ].to_numpy()
+        signal = signal[mask].to_numpy()
 
         df = df.loc[mask]
 
-        time = prepare_time(
-            df
-        )
+        time = prepare_time(df)
 
-        cycles = detect_cycles(
-            signal
-        )
+        cycles = detect_cycles(signal)
 
         st.write(
             f"Detected cycles: {len(cycles)}"
@@ -313,15 +289,12 @@ if uploaded:
 
         results = []
 
-        for i, (
-            start,
-            end
-        ) in enumerate(
+        for i, (start, end) in enumerate(
             cycles,
             start=1
         ):
 
-            res = analyse_cycle(
+            result = analyse_cycle(
                 signal,
                 time,
                 start,
@@ -329,29 +302,16 @@ if uploaded:
                 i
             )
 
-            if res is not None:
-                results.append(
-                    res
-                )
+            if result is not None:
+                results.append(result)
 
-        if len(results) == 0:
-            st.error(
-                "No valid cycles detected."
-            )
-            st.stop()
-
-        results_df = pd.DataFrame(
-            results
-        )
+        results_df = pd.DataFrame(results)
 
         st.subheader(
             "Cycle Results"
         )
 
-        st.dataframe(
-            results_df,
-            use_container_width=True
-        )
+        st.dataframe(results_df)
 
         summary_df = pd.DataFrame({
             "Metric": [
@@ -361,32 +321,16 @@ if uploaded:
                 "T10 Recovery (s)"
             ],
             "Average": [
-                results_df[
-                    "T30 Response (s)"
-                ].mean(),
-                results_df[
-                    "T90 Response (s)"
-                ].mean(),
-                results_df[
-                    "T60 Recovery (s)"
-                ].mean(),
-                results_df[
-                    "T10 Recovery (s)"
-                ].mean()
+                results_df["T30 Response (s)"].mean(),
+                results_df["T90 Response (s)"].mean(),
+                results_df["T60 Recovery (s)"].mean(),
+                results_df["T10 Recovery (s)"].mean()
             ],
             "Std Dev": [
-                results_df[
-                    "T30 Response (s)"
-                ].std(),
-                results_df[
-                    "T90 Response (s)"
-                ].std(),
-                results_df[
-                    "T60 Recovery (s)"
-                ].std(),
-                results_df[
-                    "T10 Recovery (s)"
-                ].std()
+                results_df["T30 Response (s)"].std(),
+                results_df["T90 Response (s)"].std(),
+                results_df["T60 Recovery (s)"].std(),
+                results_df["T10 Recovery (s)"].std()
             ]
         })
 
@@ -394,10 +338,7 @@ if uploaded:
             "Average Results"
         )
 
-        st.dataframe(
-            summary_df,
-            use_container_width=True
-        )
+        st.dataframe(summary_df)
 
         plot_df = pd.DataFrame({
             "Time (s)": time,
@@ -453,13 +394,8 @@ if uploaded:
         )
 
     except Exception as e:
-
-        st.error(
-            str(e)
-        )
+        st.error(str(e))
 
 else:
+    st.info("Upload a file to begin analysis.")
 
-    st.info(
-        "Upload a file to begin analysis."
-    )
