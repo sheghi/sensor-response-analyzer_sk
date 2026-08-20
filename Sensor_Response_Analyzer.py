@@ -5,14 +5,14 @@ import plotly.express as px
 from io import BytesIO
 
 st.set_page_config(
-    page_title="Sensor Response Analyzer",
+    page_title="Gas Sensor Response Analyzer",
     layout="wide"
 )
 
-st.title("Multi-Cycle Sensor Response Analyzer")
+st.title("Gas Sensor Response Analyzer")
 
 uploaded = st.file_uploader(
-    "Upload Excel or CSV file",
+    "Upload Excel or CSV",
     type=["xlsx", "csv"]
 )
 
@@ -20,16 +20,20 @@ uploaded = st.file_uploader(
 def prepare_time(df):
 
     try:
-        t = pd.to_datetime(df["time"].astype(str))
+
+        t = pd.to_datetime(
+            df["time"].astype(str)
+        )
 
         elapsed = (
             t - t.iloc[0]
         ).dt.total_seconds()
 
-        # divide by 10 as requested
+        # your correction
         return (elapsed / 10).to_numpy()
 
     except:
+
         return np.arange(len(df)) / 10
 
 
@@ -38,8 +42,8 @@ def detect_cycles(signal):
     baseline = np.percentile(signal, 10)
     plateau = np.percentile(signal, 90)
 
-    threshold = baseline + 0.5 * (
-        plateau - baseline
+    threshold = baseline + (
+        0.5 * (plateau - baseline)
     )
 
     active = signal > threshold
@@ -58,16 +62,15 @@ def detect_cycles(signal):
 
     for start in rising:
 
-        candidates = falling[
+        end_candidates = falling[
             falling > start
         ]
 
-        if len(candidates) == 0:
+        if len(end_candidates) == 0:
             continue
 
-        end = candidates[0]
+        end = end_candidates[0]
 
-        # ignore short events/noise
         if end - start > 500:
             cycles.append(
                 (start, end)
@@ -76,7 +79,39 @@ def detect_cycles(signal):
     return cycles
 
 
-def calc_cycle(
+def first_cross_above(
+    signal,
+    time,
+    target
+):
+
+    idx = np.where(
+        signal >= target
+    )[0]
+
+    if len(idx) == 0:
+        return np.nan
+
+    return time[idx[0]]
+
+
+def first_cross_below(
+    signal,
+    time,
+    target
+):
+
+    idx = np.where(
+        signal <= target
+    )[0]
+
+    if len(idx) == 0:
+        return np.nan
+
+    return time[idx[0]]
+
+
+def analyse_cycle(
     signal,
     time,
     start,
@@ -95,57 +130,132 @@ def calc_cycle(
         baseline_region
     )
 
-    segment = signal[start:end]
+    plateau_region = signal[
+        max(start, end - 300):end
+    ]
 
-    seg_time = time[start:end]
+    stable = np.median(
+        plateau_region
+    )
 
-    peak = np.max(segment)
+    delta = stable - baseline
 
-    amplitude = peak - baseline
-
-    if amplitude <= 0:
+    if delta <= 0:
         return None
 
-    def cross(frac):
+    rise_signal = signal[start:end]
+    rise_time = time[start:end]
 
-        target = baseline + (
-            frac * amplitude
+    t0_rise = rise_time[0]
+
+    target30 = baseline + (
+        0.30 * delta
+    )
+
+    target60 = baseline + (
+        0.60 * delta
+    )
+
+    target90 = baseline + (
+        0.90 * delta
+    )
+
+    resp30 = (
+        first_cross_above(
+            rise_signal,
+            rise_time,
+            target30
         )
+        - t0_rise
+    )
 
-        idx = np.where(
-            segment >= target
-        )[0]
-
-        if len(idx) == 0:
-            return np.nan
-
-        return float(
-            seg_time[idx[0]]
+    resp60 = (
+        first_cross_above(
+            rise_signal,
+            rise_time,
+            target60
         )
+        - t0_rise
+    )
 
-    t10 = cross(0.10)
-    t50 = cross(0.50)
-    t90 = cross(0.90)
-    t95 = cross(0.95)
+    resp90 = (
+        first_cross_above(
+            rise_signal,
+            rise_time,
+            target90
+        )
+        - t0_rise
+    )
 
-    if (
-        np.isnan(t10)
-        or np.isnan(t90)
-    ):
-        rise_time = np.nan
-    else:
-        rise_time = t90 - t10
+    recovery_signal = signal[end:]
+    recovery_time = time[end:]
+
+    if len(recovery_signal) < 50:
+        return None
+
+    t0_rec = recovery_time[0]
+
+    rec90_target = baseline + (
+        0.90 * delta
+    )
+
+    rec60_target = baseline + (
+        0.60 * delta
+    )
+
+    rec30_target = baseline + (
+        0.30 * delta
+    )
+
+    rec10_target = baseline + (
+        0.10 * delta
+    )
+
+    rec90 = (
+        first_cross_below(
+            recovery_signal,
+            recovery_time,
+            rec90_target
+        )
+        - t0_rec
+    )
+
+    rec60 = (
+        first_cross_below(
+            recovery_signal,
+            recovery_time,
+            rec60_target
+        )
+        - t0_rec
+    )
+
+    rec30 = (
+        first_cross_below(
+            recovery_signal,
+            recovery_time,
+            rec30_target
+        )
+        - t0_rec
+    )
+
+    rec10 = (
+        first_cross_below(
+            recovery_signal,
+            recovery_time,
+            rec10_target
+        )
+        - t0_rec
+    )
 
     return {
         "Cycle": cycle_no,
-        "Baseline": round(baseline, 4),
-        "Peak": round(peak, 4),
-        "Amplitude": round(amplitude, 4),
-        "T10 (s)": round(t10, 2),
-        "T50 (s)": round(t50, 2),
-        "T90 (s)": round(t90, 2),
-        "T95 (s)": round(t95, 2),
-        "Rise Time (s)": round(rise_time, 2)
+        "T30 Response (s)": round(resp30, 2),
+        "T60 Response (s)": round(resp60, 2),
+        "T90 Response (s)": round(resp90, 2),
+        "T90 Recovery (s)": round(rec90, 2),
+        "T60 Recovery (s)": round(rec60, 2),
+        "T30 Recovery (s)": round(rec30, 2),
+        "T10 Recovery (s)": round(rec10, 2)
     }
 
 
@@ -164,15 +274,11 @@ if uploaded:
         ]
 
         if "time" not in df.columns:
-            st.error(
-                "Column 'time' not found"
-            )
+            st.error("time column not found")
             st.stop()
 
         if "signal" not in df.columns:
-            st.error(
-                "Column 'signal' not found"
-            )
+            st.error("signal column not found")
             st.stop()
 
         signal = pd.to_numeric(
@@ -198,15 +304,12 @@ if uploaded:
 
         results = []
 
-        for i, (
-            start,
-            end
-        ) in enumerate(
+        for i, (start, end) in enumerate(
             cycles,
             start=1
         ):
 
-            result = calc_cycle(
+            res = analyse_cycle(
                 signal,
                 time,
                 start,
@@ -214,13 +317,13 @@ if uploaded:
                 i
             )
 
-            if result:
-                results.append(result)
+            if res is not None:
+                results.append(res)
 
         if len(results) == 0:
 
             st.error(
-                "No valid cycles detected"
+                "No valid cycles detected."
             )
 
             st.stop()
@@ -315,7 +418,7 @@ if uploaded:
         st.download_button(
             "Download Analysis",
             data=buffer.getvalue(),
-            file_name="sensor_cycle_analysis.xlsx",
+            file_name="sensor_response_analysis.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
