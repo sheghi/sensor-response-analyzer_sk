@@ -21,11 +21,16 @@ def prepare_time(df):
 
     try:
         t = pd.to_datetime(df["time"].astype(str))
-        elapsed = (t - t.iloc[0]).dt.total_seconds()
-        return elapsed.to_numpy()
+
+        elapsed = (
+            t - t.iloc[0]
+        ).dt.total_seconds()
+
+        # divide by 10 as requested
+        return (elapsed / 10).to_numpy()
 
     except:
-        return np.arange(len(df))
+        return np.arange(len(df)) / 10
 
 
 def detect_cycles(signal):
@@ -33,45 +38,66 @@ def detect_cycles(signal):
     baseline = np.percentile(signal, 10)
     plateau = np.percentile(signal, 90)
 
-    threshold = baseline + 0.5 * (plateau - baseline)
+    threshold = baseline + 0.5 * (
+        plateau - baseline
+    )
 
     active = signal > threshold
 
     rising = np.where(
-        np.diff(active.astype(int)) == 1
+        (active[1:] == True)
+        & (active[:-1] == False)
     )[0]
 
     falling = np.where(
-        np.diff(active.astype(int)) == -1
+        (active[1:] == False)
+        & (active[:-1] == True)
     )[0]
 
     cycles = []
 
     for start in rising:
 
-        end_candidates = falling[falling > start]
+        candidates = falling[
+            falling > start
+        ]
 
-        if len(end_candidates) == 0:
+        if len(candidates) == 0:
             continue
 
-        end = end_candidates[0]
+        end = candidates[0]
 
-        if end - start > 100:
-            cycles.append((start, end))
+        # ignore short events/noise
+        if end - start > 500:
+            cycles.append(
+                (start, end)
+            )
 
     return cycles
 
 
-def calc_cycle(signal, time, start, end, cycle_no):
+def calc_cycle(
+    signal,
+    time,
+    start,
+    end,
+    cycle_no
+):
 
-    baseline_region = signal[max(0, start - 100):start]
+    baseline_region = signal[
+        max(0, start - 300):start
+    ]
 
-    if len(baseline_region) < 20:
+    if len(baseline_region) < 50:
         return None
 
-    baseline = np.mean(baseline_region)
+    baseline = np.median(
+        baseline_region
+    )
 
     segment = signal[start:end]
+
+    seg_time = time[start:end]
 
     peak = np.max(segment)
 
@@ -80,25 +106,32 @@ def calc_cycle(signal, time, start, end, cycle_no):
     if amplitude <= 0:
         return None
 
-    seg_time = time[start:end]
+    def cross(frac):
 
-    def crossing(frac):
+        target = baseline + (
+            frac * amplitude
+        )
 
-        target = baseline + frac * amplitude
-
-        idx = np.where(segment >= target)[0]
+        idx = np.where(
+            segment >= target
+        )[0]
 
         if len(idx) == 0:
             return np.nan
 
-        return float(seg_time[idx[0]])
+        return float(
+            seg_time[idx[0]]
+        )
 
-    t10 = crossing(0.10)
-    t50 = crossing(0.50)
-    t90 = crossing(0.90)
-    t95 = crossing(0.95)
+    t10 = cross(0.10)
+    t50 = cross(0.50)
+    t90 = cross(0.90)
+    t95 = cross(0.95)
 
-    if np.isnan(t10) or np.isnan(t90):
+    if (
+        np.isnan(t10)
+        or np.isnan(t90)
+    ):
         rise_time = np.nan
     else:
         rise_time = t90 - t10
@@ -131,11 +164,15 @@ if uploaded:
         ]
 
         if "time" not in df.columns:
-            st.error("Column 'time' not found")
+            st.error(
+                "Column 'time' not found"
+            )
             st.stop()
 
         if "signal" not in df.columns:
-            st.error("Column 'signal' not found")
+            st.error(
+                "Column 'signal' not found"
+            )
             st.stop()
 
         signal = pd.to_numeric(
@@ -143,49 +180,73 @@ if uploaded:
             errors="coerce"
         )
 
-        valid = signal.notna()
+        mask = signal.notna()
 
-        signal = signal[valid].to_numpy()
+        signal = signal[
+            mask
+        ].to_numpy()
 
-        df = df.loc[valid]
+        df = df.loc[mask]
 
         time = prepare_time(df)
 
         cycles = detect_cycles(signal)
 
-        st.write(f"Detected cycles: {len(cycles)}")
+        st.write(
+            f"Detected cycles: {len(cycles)}"
+        )
 
         results = []
 
-        for n, (start, end) in enumerate(cycles, start=1):
+        for i, (
+            start,
+            end
+        ) in enumerate(
+            cycles,
+            start=1
+        ):
 
-            m = calc_cycle(
+            result = calc_cycle(
                 signal,
                 time,
                 start,
                 end,
-                n
+                i
             )
 
-            if m:
-                results.append(m)
+            if result:
+                results.append(result)
 
         if len(results) == 0:
-            st.error("No valid cycles detected")
+
+            st.error(
+                "No valid cycles detected"
+            )
+
             st.stop()
 
-        results_df = pd.DataFrame(results)
+        results_df = pd.DataFrame(
+            results
+        )
 
-        st.subheader("Cycle Results")
-        st.dataframe(results_df)
+        st.subheader(
+            "Cycle Results"
+        )
+
+        st.dataframe(
+            results_df,
+            use_container_width=True
+        )
 
         numeric_cols = [
-            c for c in results_df.columns
+            c
+            for c in results_df.columns
             if c != "Cycle"
         ]
 
         summary_df = pd.DataFrame({
-            "Metric": numeric_cols,
+            "Metric":
+                numeric_cols,
             "Average": [
                 results_df[c].mean()
                 for c in numeric_cols
@@ -196,8 +257,14 @@ if uploaded:
             ]
         })
 
-        st.subheader("Average Results")
-        st.dataframe(summary_df)
+        st.subheader(
+            "Average Results"
+        )
+
+        st.dataframe(
+            summary_df,
+            use_container_width=True
+        )
 
         plot_df = pd.DataFrame({
             "Time (s)": time,
@@ -258,4 +325,6 @@ if uploaded:
 
 else:
 
-    st.info("Upload a file to begin analysis.")
+    st.info(
+        "Upload a file to begin analysis."
+    )
