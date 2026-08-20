@@ -16,27 +16,30 @@ uploaded = st.file_uploader(
     type=["xlsx", "csv"]
 )
 
-
 def prepare_time(df):
 
     try:
-        t = pd.to_datetime(df["time"].astype(str))
+
+        t = pd.to_datetime(
+            df["time"].astype(str)
+        )
 
         elapsed = (
             t - t.iloc[0]
         ).dt.total_seconds()
 
-        return (elapsed / 10).to_numpy()
+        return elapsed.to_numpy()
 
     except:
-        return np.arange(len(df)) / 10
+
+        return np.arange(len(df))
 
 
 def smooth_signal(signal):
 
     return (
         pd.Series(signal)
-        .rolling(window=25, center=True)
+        .rolling(window=21, center=True)
         .mean()
         .bfill()
         .ffill()
@@ -69,34 +72,29 @@ def detect_cycles(signal):
 
     cycles = []
 
-    for rise in rising:
+    for start in rising:
 
-        candidates = falling[falling > rise]
+        candidates = falling[
+            falling > start
+        ]
 
         if len(candidates) == 0:
             continue
 
-        fall = candidates[0]
+        end = candidates[0]
 
-        if fall - rise > 300:
-            cycles.append((rise, fall))
+        if (end - start) > 300:
+            cycles.append((start, end))
 
     return cycles
 
 
-def first_above(sig, tm, target):
+def first_above(sig, tm, target, start_time):
 
-    idx = np.where(sig >= target)[0]
-
-    if len(idx) == 0:
-        return np.nan
-
-    return tm[idx[0]]
-
-
-def first_below(sig, tm, target):
-
-    idx = np.where(sig <= target)[0]
+    idx = np.where(
+        (sig >= target) &
+        (tm >= start_time)
+    )[0]
 
     if len(idx) == 0:
         return np.nan
@@ -104,39 +102,64 @@ def first_below(sig, tm, target):
     return tm[idx[0]]
 
 
-def analyse_cycle(signal, time, start, end, cycle):
+def first_below(sig, tm, target, start_time):
+
+    idx = np.where(
+        (sig <= target) &
+        (tm >= start_time)
+    )[0]
+
+    if len(idx) == 0:
+        return np.nan
+
+    return tm[idx[0]]
+
+
+def analyse_cycle(signal, time, start, end, cycle_no):
 
     smoothed = smooth_signal(signal)
 
+    baseline_region = smoothed[
+        max(0, start - 300):start
+    ]
+
+    if len(baseline_region) < 50:
+        return None
+
     baseline = np.median(
-        smoothed[max(0, start - 300):start]
+        baseline_region
     )
 
     plateau_start = start + int(
-        0.40 * (end - start)
+        (end - start) * 0.50
     )
 
     plateau_end = start + int(
-        0.80 * (end - start)
+        (end - start) * 0.80
     )
 
-    stable = np.median(
-        smoothed[plateau_start:plateau_end]
+    plateau = np.median(
+        smoothed[
+            plateau_start:plateau_end
+        ]
     )
 
-    delta = stable - baseline
+    delta = plateau - baseline
 
     if delta <= 0:
         return None
 
-    gas_on = start
-    gas_off = end
+    #
+    # RESPONSE
+    #
 
-    rise_region = smoothed[
+    gas_on_time = time[start]
+
+    response_signal = smoothed[
         max(0, start - 100):end
     ]
 
-    rise_time = time[
+    response_time = time[
         max(0, start - 100):end
     ]
 
@@ -144,91 +167,98 @@ def analyse_cycle(signal, time, start, end, cycle):
     target60 = baseline + 0.60 * delta
     target90 = baseline + 0.90 * delta
 
-    t30 = (
-        first_above(
-            rise_region,
-            rise_time,
-            target30
-        )
-        - time[gas_on]
+    t30 = first_above(
+        response_signal,
+        response_time,
+        target30,
+        gas_on_time
     )
 
-    t60 = (
-        first_above(
-            rise_region,
-            rise_time,
-            target60
-        )
-        - time[gas_on]
+    t60 = first_above(
+        response_signal,
+        response_time,
+        target60,
+        gas_on_time
     )
 
-    t90 = (
-        first_above(
-            rise_region,
-            rise_time,
-            target90
-        )
-        - time[gas_on]
+    t90 = first_above(
+        response_signal,
+        response_time,
+        target90,
+        gas_on_time
     )
 
-    recovery_region = smoothed[
-        end:min(len(smoothed), end + 1000)
+    response30 = t30 - gas_on_time
+    response60 = t60 - gas_on_time
+    response90 = t90 - gas_on_time
+
+    #
+    # RECOVERY
+    #
+
+    gas_off_time = time[end]
+
+    recovery_signal = smoothed[
+        end:min(
+            len(smoothed),
+            end + 1500
+        )
     ]
 
     recovery_time = time[
-        end:min(len(time), end + 1000)
+        end:min(
+            len(time),
+            end + 1500
+        )
     ]
 
-    target90r = baseline + 0.90 * delta
-    target60r = baseline + 0.60 * delta
-    target30r = baseline + 0.30 * delta
-    target10r = baseline + 0.10 * delta
+    rec90_target = baseline + 0.90 * delta
+    rec60_target = baseline + 0.60 * delta
+    rec30_target = baseline + 0.30 * delta
+    rec10_target = baseline + 0.10 * delta
 
-    r90 = (
-        first_below(
-            recovery_region,
-            recovery_time,
-            target90r
-        )
-        - time[gas_off]
+    r90 = first_below(
+        recovery_signal,
+        recovery_time,
+        rec90_target,
+        gas_off_time
     )
 
-    r60 = (
-        first_below(
-            recovery_region,
-            recovery_time,
-            target60r
-        )
-        - time[gas_off]
+    r60 = first_below(
+        recovery_signal,
+        recovery_time,
+        rec60_target,
+        gas_off_time
     )
 
-    r30 = (
-        first_below(
-            recovery_region,
-            recovery_time,
-            target30r
-        )
-        - time[gas_off]
+    r30 = first_below(
+        recovery_signal,
+        recovery_time,
+        rec30_target,
+        gas_off_time
     )
 
-    r10 = (
-        first_below(
-            recovery_region,
-            recovery_time,
-            target10r
-        )
-        - time[gas_off]
+    r10 = first_below(
+        recovery_signal,
+        recovery_time,
+        rec10_target,
+        gas_off_time
     )
+
+    recovery90 = r90 - gas_off_time
+    recovery60 = r60 - gas_off_time
+    recovery30 = r30 - gas_off_time
+    recovery10 = r10 - gas_off_time
 
     return {
-        "Cycle": cycle,
-        "T30 Response (s)": round(t30, 2),
-        "T60 Response (s)": round(t60, 2),
-        "T90 Response (s)": round(t90, 2),
-        "T90 Recovery (s)": round(r90, 2),
-        "T60 Recovery (s)": round(r60, 2),
-        "T30 Recovery (s)": round(r30, 2),
-        "T10 Recovery (s)": round(r10, 2)
+        "Cycle": cycle_no,
+        "T30 Response (s)": round(response30, 2),
+        "T60 Response (s)": round(response60, 2),
+        "T90 Response (s)": round(response90, 2),
+        "T90 Recovery (s)": round(recovery90, 2),
+        "T60 Recovery (s)": round(recovery60, 2),
+        "T30 Recovery (s)": round(recovery30, 2),
+        "T10 Recovery (s)": round(recovery10, 2)
     }
 
 
@@ -251,11 +281,13 @@ if uploaded:
             errors="coerce"
         )
 
-        mask = signal.notna()
+        valid = signal.notna()
 
-        signal = signal[mask].to_numpy()
+        signal = signal[
+            valid
+        ].to_numpy()
 
-        df = df.loc[mask]
+        df = df.loc[valid]
 
         time = prepare_time(df)
 
@@ -267,7 +299,7 @@ if uploaded:
 
         results = []
 
-        for n, (start, end) in enumerate(
+        for i, (start, end) in enumerate(
             cycles,
             start=1
         ):
@@ -277,36 +309,48 @@ if uploaded:
                 time,
                 start,
                 end,
-                n
+                i
             )
 
-            if res:
+            if res is not None:
                 results.append(res)
 
         results_df = pd.DataFrame(results)
 
-        st.subheader("Cycle Results")
-        st.dataframe(results_df)
+        st.subheader(
+            "Cycle Results"
+        )
+
+        st.dataframe(
+            results_df,
+            use_container_width=True
+        )
+
+        numeric_cols = [
+            c for c in results_df.columns
+            if c != "Cycle"
+        ]
 
         summary_df = pd.DataFrame({
-            "Metric": [
-                c for c in results_df.columns
-                if c != "Cycle"
-            ],
+            "Metric": numeric_cols,
             "Average": [
                 results_df[c].mean()
-                for c in results_df.columns
-                if c != "Cycle"
+                for c in numeric_cols
             ],
             "Std Dev": [
                 results_df[c].std()
-                for c in results_df.columns
-                if c != "Cycle"
+                for c in numeric_cols
             ]
         })
 
-        st.subheader("Average Results")
-        st.dataframe(summary_df)
+        st.subheader(
+            "Average Results"
+        )
+
+        st.dataframe(
+            summary_df,
+            use_container_width=True
+        )
 
         plot_df = pd.DataFrame({
             "Time (s)": time,
@@ -357,11 +401,16 @@ if uploaded:
         st.download_button(
             "Download Analysis",
             data=buffer.getvalue(),
-            file_name="sensor_response_analysis.xlsx"
+            file_name="sensor_response_analysis.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
     except Exception as e:
+
         st.error(str(e))
 
 else:
-    st.info("Upload a file to begin.")
+
+    st.info(
+        "Upload a file to begin."
+    )
