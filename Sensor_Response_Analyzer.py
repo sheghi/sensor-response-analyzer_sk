@@ -24,99 +24,95 @@ def prepare_time(df):
         elapsed = (t - t.iloc[0]).dt.total_seconds()
         return elapsed.to_numpy()
 
-    except Exception:
+    except:
         return np.arange(len(df))
 
 
-def detect_peaks(signal):
+def detect_cycles(signal):
 
-    smooth = (
-        pd.Series(signal)
-        .rolling(window=15, center=True)
-        .mean()
-        .bfill()
-        .ffill()
-    )
+    baseline = np.percentile(signal, 10)
+    plateau = np.percentile(signal, 90)
 
-    threshold = np.percentile(signal, 80)
+    threshold = baseline + 0.5 * (plateau - baseline)
 
-    raw_peaks = []
+    active = signal > threshold
 
-    for i in range(1, len(smooth) - 1):
+    rising = np.where(
+        np.diff(active.astype(int)) == 1
+    )[0]
 
-        if (
-            smooth.iloc[i] > smooth.iloc[i - 1]
-            and smooth.iloc[i] > smooth.iloc[i + 1]
-            and smooth.iloc[i] > threshold
-        ):
-            raw_peaks.append(i)
+    falling = np.where(
+        np.diff(active.astype(int)) == -1
+    )[0]
 
-    peaks = []
+    cycles = []
 
-    for p in raw_peaks:
+    for start in rising:
 
-        if len(peaks) == 0:
-            peaks.append(p)
+        end_candidates = falling[falling > start]
 
-        elif p - peaks[-1] > 300:
-            peaks.append(p)
+        if len(end_candidates) == 0:
+            continue
 
-    return np.array(peaks)
+        end = end_candidates[0]
+
+        if end - start > 100:
+            cycles.append((start, end))
+
+    return cycles
 
 
-def calc_cycle(signal, time, peak_idx, cycle_no):
+def calc_cycle(signal, time, start, end, cycle_no):
 
-    left = max(0, peak_idx - 250)
-    right = min(len(signal) - 1, peak_idx + 250)
+    baseline_region = signal[max(0, start - 100):start]
 
-    baseline_region = signal[left:peak_idx]
-
-    if len(baseline_region) < 10:
+    if len(baseline_region) < 20:
         return None
 
-    baseline = np.min(baseline_region)
+    baseline = np.mean(baseline_region)
 
-    peak = signal[peak_idx]
+    segment = signal[start:end]
+
+    peak = np.max(segment)
 
     amplitude = peak - baseline
 
     if amplitude <= 0:
         return None
 
-    rise_signal = signal[left:peak_idx + 1]
-    rise_time = time[left:peak_idx + 1]
+    seg_time = time[start:end]
 
     def crossing(frac):
 
         target = baseline + frac * amplitude
 
-        idx = np.where(rise_signal >= target)[0]
+        idx = np.where(segment >= target)[0]
 
         if len(idx) == 0:
             return np.nan
 
-        return float(rise_time[idx[0]])
+        return float(seg_time[idx[0]])
 
     t10 = crossing(0.10)
     t50 = crossing(0.50)
     t90 = crossing(0.90)
     t95 = crossing(0.95)
 
-    response_time = np.nan
-
-    if not np.isnan(t10) and not np.isnan(t90):
-        response_time = t90 - t10
+    if np.isnan(t10) or np.isnan(t90):
+        rise_time = np.nan
+    else:
+        rise_time = t90 - t10
 
     return {
         "Cycle": cycle_no,
-        "Baseline": baseline,
-        "Peak": peak,
-        "Amplitude": amplitude,
-        "T10 (s)": t10,
-        "T50 (s)": t50,
-        "T90 (s)": t90,
-        "T95 (s)": t95,
-        "Rise Time (s)": response_time
+        "Baseline": round(baseline, 4),
+        "Peak": round(peak, 4),
+        "Amplitude": round(amplitude, 4),
+        "T10 (s)": round(t10, 2),
+        "T50 (s)": round(t50, 2),
+        "T90 (s)": round(t90, 2),
+        "T95 (s)": round(t95, 2),
+        "Rise Time (s)": round(rise_time, 2)
     }
 
 
@@ -155,38 +151,33 @@ if uploaded:
 
         time = prepare_time(df)
 
-        peaks = detect_peaks(signal)
+        cycles = detect_cycles(signal)
 
-        if len(peaks) == 0:
-            st.error("No cycles detected.")
-            st.stop()
+        st.write(f"Detected cycles: {len(cycles)}")
 
         results = []
 
-        for cycle_no, peak_idx in enumerate(peaks, start=1):
+        for n, (start, end) in enumerate(cycles, start=1):
 
-            res = calc_cycle(
+            m = calc_cycle(
                 signal,
                 time,
-                peak_idx,
-                cycle_no
+                start,
+                end,
+                n
             )
 
-            if res is not None:
-                results.append(res)
+            if m:
+                results.append(m)
 
         if len(results) == 0:
-            st.error("No valid cycles found.")
+            st.error("No valid cycles detected")
             st.stop()
 
         results_df = pd.DataFrame(results)
 
         st.subheader("Cycle Results")
-
-        st.dataframe(
-            results_df,
-            use_container_width=True
-        )
+        st.dataframe(results_df)
 
         numeric_cols = [
             c for c in results_df.columns
@@ -206,11 +197,7 @@ if uploaded:
         })
 
         st.subheader("Average Results")
-
-        st.dataframe(
-            summary_df,
-            use_container_width=True
-        )
+        st.dataframe(summary_df)
 
         plot_df = pd.DataFrame({
             "Time (s)": time,
@@ -224,12 +211,15 @@ if uploaded:
             title="Sensor Response"
         )
 
-        fig.add_scatter(
-            x=time[peaks],
-            y=signal[peaks],
-            mode="markers",
-            name="Detected Peaks"
-        )
+        for start, end in cycles:
+
+            fig.add_vrect(
+                x0=time[start],
+                x1=time[end],
+                fillcolor="green",
+                opacity=0.2,
+                line_width=0
+            )
 
         st.plotly_chart(
             fig,
@@ -264,7 +254,7 @@ if uploaded:
 
     except Exception as e:
 
-        st.error(f"Error: {e}")
+        st.error(str(e))
 
 else:
 
