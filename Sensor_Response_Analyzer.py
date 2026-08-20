@@ -19,7 +19,7 @@ uploaded = st.file_uploader(
 
 def calc_metrics(df):
 
-    df.columns = [str(c).lower().strip() for c in df.columns]
+    df.columns = [str(c).lower().strip().replace('"', '') for c in df.columns]
 
     st.write("Columns detected:", list(df.columns))
     st.write("Rows loaded:", len(df))
@@ -30,15 +30,31 @@ def calc_metrics(df):
     if "signal" not in df.columns:
         raise ValueError("Column 'signal' not found")
 
-    time = pd.to_numeric(
-        df["time"],
-        errors="coerce"
-    ).to_numpy()
+    st.subheader("Raw Data Preview")
+    st.dataframe(df.head(10))
 
-    signal = pd.to_numeric(
-        df["signal"],
-        errors="coerce"
-    ).to_numpy()
+    st.write("First 10 time values:")
+    st.write(df["time"].head(10))
+
+    st.write("First 10 signal values:")
+    st.write(df["signal"].head(10))
+
+    time = (
+        df["time"]
+        .astype(str)
+        .str.replace('"', '', regex=False)
+        .str.strip()
+    )
+
+    signal = (
+        df["signal"]
+        .astype(str)
+        .str.replace('"', '', regex=False)
+        .str.strip()
+    )
+
+    time = pd.to_numeric(time, errors="coerce").to_numpy()
+    signal = pd.to_numeric(signal, errors="coerce").to_numpy()
 
     mask = ~(np.isnan(time) | np.isnan(signal))
 
@@ -48,7 +64,9 @@ def calc_metrics(df):
     st.write("Valid points:", len(time))
 
     if len(time) == 0:
-        raise ValueError("No valid numeric data found")
+        raise ValueError(
+            "No valid numeric data found. Check values shown above."
+        )
 
     baseline = np.mean(signal[:50])
 
@@ -113,9 +131,6 @@ if uploaded:
                 header=0
             )
 
-        st.subheader("Data Preview")
-        st.dataframe(df.head(20))
-
         metrics = calc_metrics(df)
 
         st.subheader("Metrics")
@@ -129,13 +144,10 @@ if uploaded:
             else:
                 display = str(value)
 
-            cols[i % 4].metric(
-                name,
-                display
-            )
+            cols[i % 4].metric(name, display)
 
         df.columns = [
-            str(c).lower().strip()
+            str(c).lower().strip().replace('"', '')
             for c in df.columns
         ]
 
@@ -151,9 +163,7 @@ if uploaded:
             use_container_width=True
         )
 
-        export_df = pd.DataFrame(
-            [metrics]
-        )
+        export_df = pd.DataFrame([metrics])
 
         buffer = BytesIO()
 
@@ -177,7 +187,7 @@ if uploaded:
 
     except Exception as e:
 
-        st.error(f"Error: {str(e)}")
+        st.error(f"Error: {e}")
 
 else:
 
