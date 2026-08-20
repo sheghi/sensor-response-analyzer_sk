@@ -12,7 +12,7 @@ st.set_page_config(
 st.title("Gas Sensor Response Analyzer")
 
 uploaded = st.file_uploader(
-    "Upload Excel or CSV",
+    "Upload Excel or CSV file",
     type=["xlsx", "csv"]
 )
 
@@ -20,9 +20,8 @@ uploaded = st.file_uploader(
 def prepare_time(df):
 
     try:
-        t = pd.to_datetime(
-            df["time"].astype(str)
-        )
+
+        t = pd.to_datetime(df["time"].astype(str))
 
         elapsed = (
             t - t.iloc[0]
@@ -31,6 +30,7 @@ def prepare_time(df):
         return elapsed.to_numpy()
 
     except:
+
         return np.arange(len(df))
 
 
@@ -71,34 +71,23 @@ def detect_cycles(signal):
 
     cycles = []
 
-    for start in rising:
+    for rise in rising:
 
         candidates = falling[
-            falling > start
+            falling > rise
         ]
 
         if len(candidates) == 0:
             continue
 
-        end = candidates[0]
+        fall = candidates[0]
 
-        if (end - start) > 300:
-            cycles.append((start, end))
+        if fall - rise > 300:
+            cycles.append(
+                (rise, fall)
+            )
 
     return cycles
-
-
-def find_crossing(sig, tm, target, mode):
-
-    if mode == "above":
-        idx = np.where(sig >= target)[0]
-    else:
-        idx = np.where(sig <= target)[0]
-
-    if len(idx) == 0:
-        return np.nan
-
-    return tm[idx[0]]
 
 
 def analyse_cycle(signal, time, start, end, cycle_no):
@@ -106,7 +95,9 @@ def analyse_cycle(signal, time, start, end, cycle_no):
     smoothed = smooth_signal(signal)
 
     baseline = np.median(
-        smoothed[max(0, start - 300):start]
+        smoothed[
+            max(0, start - 300):start
+        ]
     )
 
     plateau_start = start + int(
@@ -128,19 +119,11 @@ def analyse_cycle(signal, time, start, end, cycle_no):
     if delta <= 0:
         return None
 
-    #
+    #########################
     # RESPONSE
-    #
+    #########################
 
     gas_on_time = time[start]
-
-    response_signal = smoothed[
-        max(0, start - 100):end
-    ]
-
-    response_time = time[
-        max(0, start - 100):end
-    ]
 
     target30 = baseline + (
         0.30 * delta
@@ -150,64 +133,55 @@ def analyse_cycle(signal, time, start, end, cycle_no):
         0.90 * delta
     )
 
-    t30 = find_crossing(
-        response_signal,
-        response_time,
-        target30,
-        "above"
-    )
+    response_signal = smoothed[
+        start:end
+    ]
 
-    t90 = find_crossing(
-        response_signal,
-        response_time,
-        target90,
-        "above"
-    )
+    response_time = time[
+        start:end
+    ]
 
-    response30 = t30 - gas_on_time
-    response90 = t90 - gas_on_time
+    idx30 = np.where(
+        response_signal >= target30
+    )[0]
 
-    #
+    idx90 = np.where(
+        response_signal >= target90
+    )[0]
+
+    if len(idx30) == 0:
+        t30 = np.nan
+    else:
+        t30 = (
+            response_time[idx30[0]]
+            - gas_on_time
+        )
+
+    if len(idx90) == 0:
+        t90 = np.nan
+    else:
+        t90 = (
+            response_time[idx90[0]]
+            - gas_on_time
+        )
+
+    #########################
     # RECOVERY
-    #
+    #########################
 
-    gradient = np.gradient(smoothed)
-
-    search_start = max(0, end - 500)
-    search_end = min(
-        len(signal),
-        end + 100
-    )
-
-    grad_region = gradient[
-        search_start:search_end
-    ]
-
-    gas_off_idx = (
-        np.argmin(grad_region)
-        + search_start
-    )
-
-    gas_off_idx = max(
-        0,
-        gas_off_idx - 150
-    )
-
-    gas_off_time = time[
-        gas_off_idx
-    ]
+    gas_off_time = time[end]
 
     recovery_signal = smoothed[
-        gas_off_idx:min(
-            len(signal),
-            gas_off_idx + 1500
+        end:min(
+            len(smoothed),
+            end + 2000
         )
     ]
 
     recovery_time = time[
-        gas_off_idx:min(
+        end:min(
             len(time),
-            gas_off_idx + 1500
+            end + 2000
         )
     ]
 
@@ -219,29 +193,36 @@ def analyse_cycle(signal, time, start, end, cycle_no):
         0.10 * delta
     )
 
-    r60 = find_crossing(
-        recovery_signal,
-        recovery_time,
-        target60,
-        "below"
-    )
+    idx60 = np.where(
+        recovery_signal <= target60
+    )[0]
 
-    r10 = find_crossing(
-        recovery_signal,
-        recovery_time,
-        target10,
-        "below"
-    )
+    idx10 = np.where(
+        recovery_signal <= target10
+    )[0]
 
-    recovery60 = r60 - gas_off_time
-    recovery10 = r10 - gas_off_time
+    if len(idx60) == 0:
+        rec60 = np.nan
+    else:
+        rec60 = (
+            recovery_time[idx60[0]]
+            - gas_off_time
+        )
+
+    if len(idx10) == 0:
+        rec10 = np.nan
+    else:
+        rec10 = (
+            recovery_time[idx10[0]]
+            - gas_off_time
+        )
 
     return {
         "Cycle": cycle_no,
-        "T30 Response (s)": round(response30, 2),
-        "T90 Response (s)": round(response90, 2),
-        "T60 Recovery (s)": round(recovery60, 2),
-        "T10 Recovery (s)": round(recovery10, 2)
+        "T30 Response (s)": round(t30, 2),
+        "T90 Response (s)": round(t90, 2),
+        "T60 Recovery (s)": round(rec60, 2),
+        "T10 Recovery (s)": round(rec10, 2)
     }
 
 
@@ -259,6 +240,12 @@ if uploaded:
             for c in df.columns
         ]
 
+        if "signal" not in df.columns:
+            st.error(
+                "Column 'signal' not found"
+            )
+            st.stop()
+
         signal = pd.to_numeric(
             df["signal"],
             errors="coerce"
@@ -266,7 +253,9 @@ if uploaded:
 
         mask = signal.notna()
 
-        signal = signal[mask].to_numpy()
+        signal = signal[
+            mask
+        ].to_numpy()
 
         df = df.loc[mask]
 
@@ -301,7 +290,6 @@ if uploaded:
             st.error(
                 "No valid cycles detected."
             )
-
             st.stop()
 
         results_df = pd.DataFrame(
@@ -406,4 +394,5 @@ if uploaded:
 
 else:
 
-    st.info("Upload a file to begin.")
+    st.info("Upload a file to begin analysis.")
+``
