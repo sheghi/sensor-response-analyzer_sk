@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-from scipy.signal import find_peaks
 from io import BytesIO
 
 st.set_page_config(
@@ -29,46 +28,84 @@ def prepare_time(df):
         return np.arange(len(df))
 
 
+def detect_peaks(signal):
+
+    smooth = (
+        pd.Series(signal)
+        .rolling(window=15, center=True)
+        .mean()
+        .bfill()
+        .ffill()
+    )
+
+    threshold = np.percentile(signal, 80)
+
+    raw_peaks = []
+
+    for i in range(1, len(smooth) - 1):
+
+        if (
+            smooth.iloc[i] > smooth.iloc[i - 1]
+            and smooth.iloc[i] > smooth.iloc[i + 1]
+            and smooth.iloc[i] > threshold
+        ):
+            raw_peaks.append(i)
+
+    peaks = []
+
+    for p in raw_peaks:
+
+        if len(peaks) == 0:
+            peaks.append(p)
+
+        elif p - peaks[-1] > 300:
+            peaks.append(p)
+
+    return np.array(peaks)
+
+
 def calc_cycle(signal, time, peak_idx, cycle_no):
 
+    left = max(0, peak_idx - 250)
+    right = min(len(signal) - 1, peak_idx + 250)
+
+    baseline_region = signal[left:peak_idx]
+
+    if len(baseline_region) < 10:
+        return None
+
+    baseline = np.min(baseline_region)
+
     peak = signal[peak_idx]
-
-    left = max(0, peak_idx - 200)
-    right = min(len(signal) - 1, peak_idx + 200)
-
-    baseline = np.min(signal[left:peak_idx])
 
     amplitude = peak - baseline
 
     if amplitude <= 0:
         return None
 
-    target10 = baseline + 0.10 * amplitude
-    target50 = baseline + 0.50 * amplitude
-    target90 = baseline + 0.90 * amplitude
-    target95 = baseline + 0.95 * amplitude
+    rise_signal = signal[left:peak_idx + 1]
+    rise_time = time[left:peak_idx + 1]
 
-    rise_region = signal[left:peak_idx + 1]
-    rise_time_region = time[left:peak_idx + 1]
+    def crossing(frac):
 
-    def first_cross(target):
+        target = baseline + frac * amplitude
 
-        idx = np.where(rise_region >= target)[0]
+        idx = np.where(rise_signal >= target)[0]
 
         if len(idx) == 0:
             return np.nan
 
-        return float(rise_time_region[idx[0]])
+        return float(rise_time[idx[0]])
 
-    t10 = first_cross(target10)
-    t50 = first_cross(target50)
-    t90 = first_cross(target90)
-    t95 = first_cross(target95)
+    t10 = crossing(0.10)
+    t50 = crossing(0.50)
+    t90 = crossing(0.90)
+    t95 = crossing(0.95)
 
-    rise_time = np.nan
+    response_time = np.nan
 
     if not np.isnan(t10) and not np.isnan(t90):
-        rise_time = t90 - t10
+        response_time = t90 - t10
 
     return {
         "Cycle": cycle_no,
@@ -79,7 +116,7 @@ def calc_cycle(signal, time, peak_idx, cycle_no):
         "T50 (s)": t50,
         "T90 (s)": t90,
         "T95 (s)": t95,
-        "Rise Time (s)": rise_time
+        "Rise Time (s)": response_time
     }
 
 
@@ -97,12 +134,12 @@ if uploaded:
             for c in df.columns
         ]
 
-        if "signal" not in df.columns:
-            st.error("Column 'signal' not found")
-            st.stop()
-
         if "time" not in df.columns:
             st.error("Column 'time' not found")
+            st.stop()
+
+        if "signal" not in df.columns:
+            st.error("Column 'signal' not found")
             st.stop()
 
         signal = pd.to_numeric(
@@ -118,29 +155,28 @@ if uploaded:
 
         time = prepare_time(df)
 
-        # Detect peaks automatically
-        peaks, properties = find_peaks(
-            signal,
-            prominence=0.2,
-            distance=300
-        )
+        peaks = detect_peaks(signal)
+
+        if len(peaks) == 0:
+            st.error("No cycles detected.")
+            st.stop()
 
         results = []
 
         for cycle_no, peak_idx in enumerate(peaks, start=1):
 
-            result = calc_cycle(
+            res = calc_cycle(
                 signal,
                 time,
                 peak_idx,
                 cycle_no
             )
 
-            if result is not None:
-                results.append(result)
+            if res is not None:
+                results.append(res)
 
         if len(results) == 0:
-            st.error("No cycles detected.")
+            st.error("No valid cycles found.")
             st.stop()
 
         results_df = pd.DataFrame(results)
