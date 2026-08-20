@@ -21,21 +21,39 @@ def calc_metrics(df):
 
     df.columns = [str(c).lower().strip() for c in df.columns]
 
+    if "time" not in df.columns:
+        raise ValueError("Column 'time' not found")
+
     if "signal" not in df.columns:
         raise ValueError("Column 'signal' not found")
 
+    # Convert signal to numeric
     signal = pd.to_numeric(
         df["signal"],
         errors="coerce"
-    ).to_numpy()
+    )
 
-    signal = signal[~np.isnan(signal)]
+    # Convert Excel time column to datetime
+    time_dt = pd.to_datetime(
+        df["time"].astype(str),
+        errors="coerce"
+    )
+
+    mask = (
+        signal.notna()
+        & time_dt.notna()
+    )
+
+    signal = signal[mask].to_numpy()
+    time_dt = time_dt[mask]
 
     if len(signal) == 0:
-        raise ValueError("No signal data found")
+        raise ValueError("No valid data found")
 
-    # Use sample index as time axis
-    time = np.arange(len(signal))
+    # Convert to elapsed seconds
+    time = (
+        time_dt - time_dt.iloc[0]
+    ).dt.total_seconds().to_numpy()
 
     baseline = np.mean(signal[:50])
 
@@ -56,7 +74,7 @@ def calc_metrics(df):
         if len(idx) == 0:
             return np.nan
 
-        return float(idx[0])
+        return float(time[idx[0]])
 
     t10 = crossing(0.10)
     t50 = crossing(0.50)
@@ -70,18 +88,20 @@ def calc_metrics(df):
         else np.nan
     )
 
-    rms_noise = float(np.std(signal[:50]))
+    rms_noise = float(
+        np.std(signal[:50])
+    )
 
     return {
         "Baseline": baseline,
         "Peak": peak,
-        "Peak Index": peak_time,
+        "Peak Time (s)": peak_time,
         "Amplitude": amplitude,
-        "T10": t10,
-        "T50": t50,
-        "T90": t90,
-        "T95": t95,
-        "Rise Time": rise_time,
+        "T10 (s)": t10,
+        "T50 (s)": t50,
+        "T90 (s)": t90,
+        "T95 (s)": t95,
+        "Rise Time (s)": rise_time,
         "RMS Noise": rms_noise
     }
 
@@ -108,12 +128,38 @@ if uploaded:
                 f"{value:.4f}"
             )
 
-        df.columns = [str(c).lower().strip() for c in df.columns]
+        # Plot using elapsed seconds
+        plot_df = df.copy()
+
+        plot_df.columns = [
+            str(c).lower().strip()
+            for c in plot_df.columns
+        ]
+
+        plot_df["time"] = pd.to_datetime(
+            plot_df["time"].astype(str),
+            errors="coerce"
+        )
+
+        plot_df = plot_df.dropna(
+            subset=["time", "signal"]
+        )
+
+        plot_df["elapsed_seconds"] = (
+            plot_df["time"]
+            - plot_df["time"].iloc[0]
+        ).dt.total_seconds()
 
         fig = px.line(
-            df,
+            plot_df,
+            x="elapsed_seconds",
             y="signal",
             title="Sensor Response Curve"
+        )
+
+        fig.update_layout(
+            xaxis_title="Time (s)",
+            yaxis_title="Signal"
         )
 
         st.plotly_chart(
@@ -122,9 +168,14 @@ if uploaded:
         )
 
         st.subheader("Data Preview")
-        st.dataframe(df.head(50))
+        st.dataframe(
+            plot_df.head(50),
+            use_container_width=True
+        )
 
-        export_df = pd.DataFrame([metrics])
+        export_df = pd.DataFrame(
+            [metrics]
+        )
 
         buffer = BytesIO()
 
@@ -135,7 +186,8 @@ if uploaded:
 
             export_df.to_excel(
                 writer,
-                index=False
+                index=False,
+                sheet_name="Results"
             )
 
         st.download_button(
