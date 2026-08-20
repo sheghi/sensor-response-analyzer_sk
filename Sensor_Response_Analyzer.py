@@ -86,25 +86,12 @@ def detect_cycles(signal):
     return cycles
 
 
-def first_above(sig, tm, target, ref):
+def find_crossing(sig, tm, target, mode="above"):
 
-    idx = np.where(
-        (sig >= target) &
-        (tm >= ref)
-    )[0]
-
-    if len(idx) == 0:
-        return np.nan
-
-    return tm[idx[0]]
-
-
-def first_below(sig, tm, target, ref):
-
-    idx = np.where(
-        (sig <= target) &
-        (tm >= ref)
-    )[0]
+    if mode == "above":
+        idx = np.where(sig >= target)[0]
+    else:
+        idx = np.where(sig <= target)[0]
 
     if len(idx) == 0:
         return np.nan
@@ -116,8 +103,15 @@ def analyse_cycle(signal, time, start, end, cycle_no):
 
     smoothed = smooth_signal(signal)
 
+    baseline_region = smoothed[
+        max(0, start - 300):start
+    ]
+
+    if len(baseline_region) < 50:
+        return None
+
     baseline = np.median(
-        smoothed[max(0, start - 300):start]
+        baseline_region
     )
 
     plateau_start = start + int(
@@ -139,130 +133,114 @@ def analyse_cycle(signal, time, start, end, cycle_no):
     if delta <= 0:
         return None
 
-    #
-    # RESPONSE
-    #
+    gas_on = start
 
-    gas_on_time = time[start]
+    rise_signal = smoothed[
+        max(0, start - 100):end
+    ]
+
+    rise_time = time[
+        max(0, start - 100):end
+    ]
+
+    rise_reference = time[gas_on]
 
     target30 = baseline + 0.30 * delta
     target60 = baseline + 0.60 * delta
     target90 = baseline + 0.90 * delta
 
-    response_signal = smoothed[
-        max(0, start - 100):end
-    ]
-
-    response_time = time[
-        max(0, start - 100):end
-    ]
-
-    t30 = first_above(
-        response_signal,
-        response_time,
+    t30 = find_crossing(
+        rise_signal,
+        rise_time,
         target30,
-        gas_on_time
+        "above"
     )
 
-    t60 = first_above(
-        response_signal,
-        response_time,
+    t60 = find_crossing(
+        rise_signal,
+        rise_time,
         target60,
-        gas_on_time
+        "above"
     )
 
-    t90 = first_above(
-        response_signal,
-        response_time,
+    t90 = find_crossing(
+        rise_signal,
+        rise_time,
         target90,
-        gas_on_time
+        "above"
     )
 
-    resp30 = t30 - gas_on_time
-    resp60 = t60 - gas_on_time
-    resp90 = t90 - gas_on_time
+    resp30 = t30 - rise_reference
+    resp60 = t60 - rise_reference
+    resp90 = t90 - rise_reference
 
     #
-    # RECOVERY
+    # Recovery
     #
 
-    search_start = max(0, end - 200)
-    search_end = min(
-        len(smoothed),
-        end + 200
-    )
+    gradient = np.gradient(smoothed)
 
-    fall_region = smoothed[
+    search_start = max(0, end - 400)
+    search_end = min(len(signal), end + 200)
+
+    grad_region = gradient[
         search_start:search_end
     ]
 
-    gradient = np.gradient(
-        fall_region
-    )
-
-    fall_start = (
-        np.argmin(gradient)
+    gas_off_idx = (
+        np.argmin(grad_region)
         + search_start
     )
 
-    gas_off_time = time[fall_start]
+    gas_off_time = time[
+        gas_off_idx
+    ]
 
     recovery_signal = smoothed[
-        fall_start:min(
-            len(smoothed),
-            fall_start + 1500
+        gas_off_idx:min(
+            len(signal),
+            gas_off_idx + 1500
         )
     ]
 
     recovery_time = time[
-        fall_start:min(
-            len(time),
-            fall_start + 1500
+        gas_off_idx:min(
+            len(signal),
+            gas_off_idx + 1500
         )
     ]
 
-    rec90_target = baseline + (
-        0.90 * delta
-    )
+    target90r = baseline + 0.90 * delta
+    target60r = baseline + 0.60 * delta
+    target30r = baseline + 0.30 * delta
+    target10r = baseline + 0.10 * delta
 
-    rec60_target = baseline + (
-        0.60 * delta
-    )
-
-    rec30_target = baseline + (
-        0.30 * delta
-    )
-
-    rec10_target = baseline + (
-        0.10 * delta
-    )
-
-    r90 = first_below(
+    r90 = find_crossing(
         recovery_signal,
         recovery_time,
-        rec90_target,
-        gas_off_time
+        target90r,
+        "below"
     )
 
-    r60 = first_below(
+    r60 = find_crossing(
         recovery_signal,
         recovery_time,
-        rec60_target,
-        gas_off_time
+        target60r,
+        "below"
     )
 
-    r30 = first_below(
+    r30 = find_crossing(
         recovery_signal,
         recovery_time,
-        rec30_target,
-        gas_off_time
+        target30r,
+        "below"
     )
 
-    r10 = first_below(
+    r10 = find_crossing(
         recovery_signal,
         recovery_time,
-        rec10_target,
-        gas_off_time
+        target10r,
+        "below"
     )
 
     rec90 = r90 - gas_off_time
@@ -301,13 +279,11 @@ if uploaded:
             errors="coerce"
         )
 
-        valid = signal.notna()
+        mask = signal.notna()
 
-        signal = signal[
-            valid
-        ].to_numpy()
+        signal = signal[mask].to_numpy()
 
-        df = df.loc[valid]
+        df = df.loc[mask]
 
         time = prepare_time(df)
 
@@ -332,13 +308,13 @@ if uploaded:
                 i
             )
 
-            if res is not None:
+            if res:
                 results.append(res)
 
         results_df = pd.DataFrame(results)
 
         st.subheader("Cycle Results")
-        st.dataframe(results_df)
+        st.dataframe(results_df, use_container_width=True)
 
         numeric_cols = [
             c for c in results_df.columns
@@ -358,7 +334,7 @@ if uploaded:
         })
 
         st.subheader("Average Results")
-        st.dataframe(summary_df)
+        st.dataframe(summary_df, use_container_width=True)
 
         plot_df = pd.DataFrame({
             "Time (s)": time,
@@ -368,11 +344,11 @@ if uploaded:
         fig = px.line(
             plot_df,
             x="Time (s)",
-            y="Signal"
+            y="Signal",
+            title="Sensor Response"
         )
 
         for start, end in cycles:
-
             fig.add_vrect(
                 x0=time[start],
                 x1=time[end],
@@ -413,7 +389,9 @@ if uploaded:
         )
 
     except Exception as e:
+
         st.error(str(e))
 
 else:
-    st.info("Upload a file to begin.")
+
+    st.info("Upload a file to begin analysis.")
