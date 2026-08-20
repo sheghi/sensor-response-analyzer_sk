@@ -20,7 +20,9 @@ uploaded = st.file_uploader(
 def prepare_time(df):
 
     try:
-        t = pd.to_datetime(df["time"].astype(str))
+        t = pd.to_datetime(
+            df["time"].astype(str)
+        )
 
         elapsed = (
             t - t.iloc[0]
@@ -86,7 +88,7 @@ def detect_cycles(signal):
     return cycles
 
 
-def find_crossing(sig, tm, target, mode="above"):
+def find_crossing(sig, tm, target, mode):
 
     if mode == "above":
         idx = np.where(sig >= target)[0]
@@ -103,15 +105,8 @@ def analyse_cycle(signal, time, start, end, cycle_no):
 
     smoothed = smooth_signal(signal)
 
-    baseline_region = smoothed[
-        max(0, start - 300):start
-    ]
-
-    if len(baseline_region) < 50:
-        return None
-
     baseline = np.median(
-        baseline_region
+        smoothed[max(0, start - 300):start]
     )
 
     plateau_start = start + int(
@@ -133,55 +128,56 @@ def analyse_cycle(signal, time, start, end, cycle_no):
     if delta <= 0:
         return None
 
-    gas_on = start
+    #
+    # RESPONSE
+    #
 
-    rise_signal = smoothed[
+    gas_on_time = time[start]
+
+    response_signal = smoothed[
         max(0, start - 100):end
     ]
 
-    rise_time = time[
+    response_time = time[
         max(0, start - 100):end
     ]
 
-    rise_reference = time[gas_on]
+    target30 = baseline + (
+        0.30 * delta
+    )
 
-    target30 = baseline + 0.30 * delta
-    target60 = baseline + 0.60 * delta
-    target90 = baseline + 0.90 * delta
+    target90 = baseline + (
+        0.90 * delta
+    )
 
     t30 = find_crossing(
-        rise_signal,
-        rise_time,
+        response_signal,
+        response_time,
         target30,
         "above"
     )
 
-    t60 = find_crossing(
-        rise_signal,
-        rise_time,
-        target60,
-        "above"
-    )
-
     t90 = find_crossing(
-        rise_signal,
-        rise_time,
+        response_signal,
+        response_time,
         target90,
         "above"
     )
 
-    resp30 = t30 - rise_reference
-    resp60 = t60 - rise_reference
-    resp90 = t90 - rise_reference
+    response30 = t30 - gas_on_time
+    response90 = t90 - gas_on_time
 
     #
-    # Recovery
+    # RECOVERY
     #
 
     gradient = np.gradient(smoothed)
 
-    search_start = max(0, end - 400)
-    search_end = min(len(signal), end + 200)
+    search_start = max(0, end - 500)
+    search_end = min(
+        len(signal),
+        end + 100
+    )
 
     grad_region = gradient[
         search_start:search_end
@@ -190,6 +186,11 @@ def analyse_cycle(signal, time, start, end, cycle_no):
     gas_off_idx = (
         np.argmin(grad_region)
         + search_start
+    )
+
+    gas_off_idx = max(
+        0,
+        gas_off_idx - 150
     )
 
     gas_off_time = time[
@@ -205,58 +206,42 @@ def analyse_cycle(signal, time, start, end, cycle_no):
 
     recovery_time = time[
         gas_off_idx:min(
-            len(signal),
+            len(time),
             gas_off_idx + 1500
         )
     ]
 
-    target90r = baseline + 0.90 * delta
-    target60r = baseline + 0.60 * delta
-    target30r = baseline + 0.30 * delta
-    target10r = baseline + 0.10 * delta
+    target60 = baseline + (
+        0.60 * delta
+    )
 
-    r90 = find_crossing(
-        recovery_signal,
-        recovery_time,
-        target90r,
-        "below"
+    target10 = baseline + (
+        0.10 * delta
     )
 
     r60 = find_crossing(
         recovery_signal,
         recovery_time,
-        target60r,
-        "below"
-    )
-
-    r30 = find_crossing(
-        recovery_signal,
-        recovery_time,
-        target30r,
+        target60,
         "below"
     )
 
     r10 = find_crossing(
         recovery_signal,
         recovery_time,
-        target10r,
+        target10,
         "below"
     )
 
-    rec90 = r90 - gas_off_time
-    rec60 = r60 - gas_off_time
-    rec30 = r30 - gas_off_time
-    rec10 = r10 - gas_off_time
+    recovery60 = r60 - gas_off_time
+    recovery10 = r10 - gas_off_time
 
     return {
         "Cycle": cycle_no,
-        "T30 Response (s)": round(resp30, 2),
-        "T60 Response (s)": round(resp60, 2),
-        "T90 Response (s)": round(resp90, 2),
-        "T90 Recovery (s)": round(rec90, 2),
-        "T60 Recovery (s)": round(rec60, 2),
-        "T30 Recovery (s)": round(rec30, 2),
-        "T10 Recovery (s)": round(rec10, 2)
+        "T30 Response (s)": round(response30, 2),
+        "T90 Response (s)": round(response90, 2),
+        "T60 Recovery (s)": round(recovery60, 2),
+        "T10 Recovery (s)": round(recovery10, 2)
     }
 
 
@@ -300,7 +285,7 @@ if uploaded:
             start=1
         ):
 
-            res = analyse_cycle(
+            result = analyse_cycle(
                 signal,
                 time,
                 start,
@@ -308,33 +293,59 @@ if uploaded:
                 i
             )
 
-            if res:
-                results.append(res)
+            if result is not None:
+                results.append(result)
 
-        results_df = pd.DataFrame(results)
+        if len(results) == 0:
 
-        st.subheader("Cycle Results")
-        st.dataframe(results_df, use_container_width=True)
+            st.error(
+                "No valid cycles detected."
+            )
 
-        numeric_cols = [
-            c for c in results_df.columns
-            if c != "Cycle"
-        ]
+            st.stop()
+
+        results_df = pd.DataFrame(
+            results
+        )
+
+        st.subheader(
+            "Cycle Results"
+        )
+
+        st.dataframe(
+            results_df,
+            use_container_width=True
+        )
 
         summary_df = pd.DataFrame({
-            "Metric": numeric_cols,
+            "Metric": [
+                "T30 Response (s)",
+                "T90 Response (s)",
+                "T60 Recovery (s)",
+                "T10 Recovery (s)"
+            ],
             "Average": [
-                results_df[c].mean()
-                for c in numeric_cols
+                results_df["T30 Response (s)"].mean(),
+                results_df["T90 Response (s)"].mean(),
+                results_df["T60 Recovery (s)"].mean(),
+                results_df["T10 Recovery (s)"].mean()
             ],
             "Std Dev": [
-                results_df[c].std()
-                for c in numeric_cols
+                results_df["T30 Response (s)"].std(),
+                results_df["T90 Response (s)"].std(),
+                results_df["T60 Recovery (s)"].std(),
+                results_df["T10 Recovery (s)"].std()
             ]
         })
 
-        st.subheader("Average Results")
-        st.dataframe(summary_df, use_container_width=True)
+        st.subheader(
+            "Average Results"
+        )
+
+        st.dataframe(
+            summary_df,
+            use_container_width=True
+        )
 
         plot_df = pd.DataFrame({
             "Time (s)": time,
@@ -349,6 +360,7 @@ if uploaded:
         )
 
         for start, end in cycles:
+
             fig.add_vrect(
                 x0=time[start],
                 x1=time[end],
@@ -394,4 +406,4 @@ if uploaded:
 
 else:
 
-    st.info("Upload a file to begin analysis.")
+    st.info("Upload a file to begin.")
