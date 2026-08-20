@@ -21,35 +21,21 @@ def calc_metrics(df):
 
     df.columns = [str(c).lower().strip() for c in df.columns]
 
-    if "time" not in df.columns:
-        raise ValueError("Column 'time' not found")
-
     if "signal" not in df.columns:
         raise ValueError("Column 'signal' not found")
-
-    # Convert HH:MM:SS into elapsed seconds
-    time_dt = pd.to_datetime(
-        df["time"],
-        format="%H:%M:%S",
-        errors="coerce"
-    )
-
-    time = (
-        time_dt - time_dt.iloc[0]
-    ).dt.total_seconds().to_numpy()
 
     signal = pd.to_numeric(
         df["signal"],
         errors="coerce"
     ).to_numpy()
 
-    mask = ~(np.isnan(time) | np.isnan(signal))
+    signal = signal[~np.isnan(signal)]
 
-    time = time[mask]
-    signal = signal[mask]
+    if len(signal) == 0:
+        raise ValueError("No signal data found")
 
-    if len(time) == 0:
-        raise ValueError("No valid data points")
+    # Use sample index as time axis
+    time = np.arange(len(signal))
 
     baseline = np.mean(signal[:50])
 
@@ -70,7 +56,7 @@ def calc_metrics(df):
         if len(idx) == 0:
             return np.nan
 
-        return float(time[idx[0]])
+        return float(idx[0])
 
     t10 = crossing(0.10)
     t50 = crossing(0.50)
@@ -89,13 +75,13 @@ def calc_metrics(df):
     return {
         "Baseline": baseline,
         "Peak": peak,
-        "Peak Time (s)": peak_time,
+        "Peak Index": peak_time,
         "Amplitude": amplitude,
-        "T10 (s)": t10,
-        "T50 (s)": t50,
-        "T90 (s)": t90,
-        "T95 (s)": t95,
-        "Rise Time (s)": rise_time,
+        "T10": t10,
+        "T50": t50,
+        "T90": t90,
+        "T95": t95,
+        "Rise Time": rise_time,
         "RMS Noise": rms_noise
     }
 
@@ -126,7 +112,6 @@ if uploaded:
 
         fig = px.line(
             df,
-            x="time",
             y="signal",
             title="Sensor Response Curve"
         )
@@ -154,7 +139,7 @@ if uploaded:
             )
 
         st.download_button(
-            "Download Results",
+            "Download Results (Excel)",
             data=buffer.getvalue(),
             file_name="sensor_analysis_results.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -166,5 +151,4 @@ if uploaded:
 
 else:
 
-    st.info("Upload a file to begin analysis.")
     st.info("Upload a file to begin analysis.")
