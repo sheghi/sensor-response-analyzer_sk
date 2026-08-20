@@ -20,122 +20,108 @@ uploaded = st.file_uploader(
 def prepare_time(df):
 
     try:
-
-        t = pd.to_datetime(
-            df["time"].astype(str)
-        )
+        t = pd.to_datetime(df["time"].astype(str))
 
         elapsed = (
             t - t.iloc[0]
         ).dt.total_seconds()
 
-        # your correction
         return (elapsed / 10).to_numpy()
 
     except:
-
         return np.arange(len(df)) / 10
+
+
+def smooth_signal(signal):
+
+    return (
+        pd.Series(signal)
+        .rolling(window=25, center=True)
+        .mean()
+        .bfill()
+        .ffill()
+        .to_numpy()
+    )
 
 
 def detect_cycles(signal):
 
-    baseline = np.percentile(signal, 10)
-    plateau = np.percentile(signal, 90)
+    smoothed = smooth_signal(signal)
+
+    baseline = np.percentile(smoothed, 10)
+    plateau = np.percentile(smoothed, 90)
 
     threshold = baseline + (
-        0.5 * (plateau - baseline)
+        0.2 * (plateau - baseline)
     )
 
-    active = signal > threshold
+    active = smoothed > threshold
 
     rising = np.where(
-        (active[1:] == True)
-        & (active[:-1] == False)
+        (active[1:] == True) &
+        (active[:-1] == False)
     )[0]
 
     falling = np.where(
-        (active[1:] == False)
-        & (active[:-1] == True)
+        (active[1:] == False) &
+        (active[:-1] == True)
     )[0]
 
     cycles = []
 
-    for start in rising:
+    for rise in rising:
 
-        end_candidates = falling[
-            falling > start
-        ]
+        candidates = falling[falling > rise]
 
-        if len(end_candidates) == 0:
+        if len(candidates) == 0:
             continue
 
-        end = end_candidates[0]
+        fall = candidates[0]
 
-        if end - start > 500:
-            cycles.append(
-                (start, end)
-            )
+        if fall - rise > 300:
+            cycles.append((rise, fall))
 
     return cycles
 
 
-def first_cross_above(
-    signal,
-    time,
-    target
-):
+def first_above(sig, tm, target):
 
-    idx = np.where(
-        signal >= target
-    )[0]
+    idx = np.where(sig >= target)[0]
 
     if len(idx) == 0:
         return np.nan
 
-    return time[idx[0]]
+    return tm[idx[0]]
 
 
-def first_cross_below(
-    signal,
-    time,
-    target
-):
+def first_below(sig, tm, target):
 
-    idx = np.where(
-        signal <= target
-    )[0]
+    idx = np.where(sig <= target)[0]
 
     if len(idx) == 0:
         return np.nan
 
-    return time[idx[0]]
+    return tm[idx[0]]
 
 
-def analyse_cycle(
-    signal,
-    time,
-    start,
-    end,
-    cycle_no
-):
+def analyse_cycle(signal, time, start, end, cycle):
 
-    baseline_region = signal[
-        max(0, start - 300):start
-    ]
-
-    if len(baseline_region) < 50:
-        return None
+    smoothed = smooth_signal(signal)
 
     baseline = np.median(
-        baseline_region
+        smoothed[max(0, start - 300):start]
     )
 
-    plateau_region = signal[
-        max(start, end - 300):end
-    ]
+    plateau_start = start + int(
+        0.40 * (end - start)
+    )
+
+    plateau_end = start + int(
+        0.80 * (end - start)
+    )
 
     stable = np.median(
-        plateau_region
+        smoothed[plateau_start:plateau_end]
     )
 
     delta = stable - baseline
@@ -143,119 +129,106 @@ def analyse_cycle(
     if delta <= 0:
         return None
 
-    rise_signal = signal[start:end]
-    rise_time = time[start:end]
+    gas_on = start
+    gas_off = end
 
-    t0_rise = rise_time[0]
+    rise_region = smoothed[
+        max(0, start - 100):end
+    ]
 
-    target30 = baseline + (
-        0.30 * delta
-    )
+    rise_time = time[
+        max(0, start - 100):end
+    ]
 
-    target60 = baseline + (
-        0.60 * delta
-    )
+    target30 = baseline + 0.30 * delta
+    target60 = baseline + 0.60 * delta
+    target90 = baseline + 0.90 * delta
 
-    target90 = baseline + (
-        0.90 * delta
-    )
-
-    resp30 = (
-        first_cross_above(
-            rise_signal,
+    t30 = (
+        first_above(
+            rise_region,
             rise_time,
             target30
         )
-        - t0_rise
+        - time[gas_on]
     )
 
-    resp60 = (
-        first_cross_above(
-            rise_signal,
+    t60 = (
+        first_above(
+            rise_region,
             rise_time,
             target60
         )
-        - t0_rise
+        - time[gas_on]
     )
 
-    resp90 = (
-        first_cross_above(
-            rise_signal,
+    t90 = (
+        first_above(
+            rise_region,
             rise_time,
             target90
         )
-        - t0_rise
+        - time[gas_on]
     )
 
-    recovery_signal = signal[end:]
-    recovery_time = time[end:]
+    recovery_region = smoothed[
+        end:min(len(smoothed), end + 1000)
+    ]
 
-    if len(recovery_signal) < 50:
-        return None
+    recovery_time = time[
+        end:min(len(time), end + 1000)
+    ]
 
-    t0_rec = recovery_time[0]
+    target90r = baseline + 0.90 * delta
+    target60r = baseline + 0.60 * delta
+    target30r = baseline + 0.30 * delta
+    target10r = baseline + 0.10 * delta
 
-    rec90_target = baseline + (
-        0.90 * delta
-    )
-
-    rec60_target = baseline + (
-        0.60 * delta
-    )
-
-    rec30_target = baseline + (
-        0.30 * delta
-    )
-
-    rec10_target = baseline + (
-        0.10 * delta
-    )
-
-    rec90 = (
-        first_cross_below(
-            recovery_signal,
+    r90 = (
+        first_below(
+            recovery_region,
             recovery_time,
-            rec90_target
+            target90r
         )
-        - t0_rec
+        - time[gas_off]
     )
 
-    rec60 = (
-        first_cross_below(
-            recovery_signal,
+    r60 = (
+        first_below(
+            recovery_region,
             recovery_time,
-            rec60_target
+            target60r
         )
-        - t0_rec
+        - time[gas_off]
     )
 
-    rec30 = (
-        first_cross_below(
-            recovery_signal,
+    r30 = (
+        first_below(
+            recovery_region,
             recovery_time,
-            rec30_target
+            target30r
         )
-        - t0_rec
+        - time[gas_off]
     )
 
-    rec10 = (
-        first_cross_below(
-            recovery_signal,
+    r10 = (
+        first_below(
+            recovery_region,
             recovery_time,
-            rec10_target
+            target10r
         )
-        - t0_rec
+        - time[gas_off]
     )
 
     return {
-        "Cycle": cycle_no,
-        "T30 Response (s)": round(resp30, 2),
-        "T60 Response (s)": round(resp60, 2),
-        "T90 Response (s)": round(resp90, 2),
-        "T90 Recovery (s)": round(rec90, 2),
-        "T60 Recovery (s)": round(rec60, 2),
-        "T30 Recovery (s)": round(rec30, 2),
-        "T10 Recovery (s)": round(rec10, 2)
+        "Cycle": cycle,
+        "T30 Response (s)": round(t30, 2),
+        "T60 Response (s)": round(t60, 2),
+        "T90 Response (s)": round(t90, 2),
+        "T90 Recovery (s)": round(r90, 2),
+        "T60 Recovery (s)": round(r60, 2),
+        "T30 Recovery (s)": round(r30, 2),
+        "T10 Recovery (s)": round(r10, 2)
     }
 
 
@@ -273,14 +246,6 @@ if uploaded:
             for c in df.columns
         ]
 
-        if "time" not in df.columns:
-            st.error("time column not found")
-            st.stop()
-
-        if "signal" not in df.columns:
-            st.error("signal column not found")
-            st.stop()
-
         signal = pd.to_numeric(
             df["signal"],
             errors="coerce"
@@ -288,9 +253,7 @@ if uploaded:
 
         mask = signal.notna()
 
-        signal = signal[
-            mask
-        ].to_numpy()
+        signal = signal[mask].to_numpy()
 
         df = df.loc[mask]
 
@@ -304,7 +267,7 @@ if uploaded:
 
         results = []
 
-        for i, (start, end) in enumerate(
+        for n, (start, end) in enumerate(
             cycles,
             start=1
         ):
@@ -314,60 +277,36 @@ if uploaded:
                 time,
                 start,
                 end,
-                i
+                n
             )
 
-            if res is not None:
+            if res:
                 results.append(res)
 
-        if len(results) == 0:
+        results_df = pd.DataFrame(results)
 
-            st.error(
-                "No valid cycles detected."
-            )
-
-            st.stop()
-
-        results_df = pd.DataFrame(
-            results
-        )
-
-        st.subheader(
-            "Cycle Results"
-        )
-
-        st.dataframe(
-            results_df,
-            use_container_width=True
-        )
-
-        numeric_cols = [
-            c
-            for c in results_df.columns
-            if c != "Cycle"
-        ]
+        st.subheader("Cycle Results")
+        st.dataframe(results_df)
 
         summary_df = pd.DataFrame({
-            "Metric":
-                numeric_cols,
+            "Metric": [
+                c for c in results_df.columns
+                if c != "Cycle"
+            ],
             "Average": [
                 results_df[c].mean()
-                for c in numeric_cols
+                for c in results_df.columns
+                if c != "Cycle"
             ],
             "Std Dev": [
                 results_df[c].std()
-                for c in numeric_cols
+                for c in results_df.columns
+                if c != "Cycle"
             ]
         })
 
-        st.subheader(
-            "Average Results"
-        )
-
-        st.dataframe(
-            summary_df,
-            use_container_width=True
-        )
+        st.subheader("Average Results")
+        st.dataframe(summary_df)
 
         plot_df = pd.DataFrame({
             "Time (s)": time,
@@ -387,7 +326,7 @@ if uploaded:
                 x0=time[start],
                 x1=time[end],
                 fillcolor="green",
-                opacity=0.2,
+                opacity=0.15,
                 line_width=0
             )
 
@@ -418,16 +357,11 @@ if uploaded:
         st.download_button(
             "Download Analysis",
             data=buffer.getvalue(),
-            file_name="sensor_response_analysis.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            file_name="sensor_response_analysis.xlsx"
         )
 
     except Exception as e:
-
         st.error(str(e))
 
 else:
-
-    st.info(
-        "Upload a file to begin analysis."
-    )
+    st.info("Upload a file to begin.")
