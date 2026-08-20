@@ -12,7 +12,7 @@ st.set_page_config(
 st.title("Gas Sensor Response Analyzer")
 
 uploaded = st.file_uploader(
-    "Upload Excel or CSV",
+    "Upload Excel or CSV file",
     type=["xlsx", "csv"]
 )
 
@@ -20,10 +20,7 @@ uploaded = st.file_uploader(
 def prepare_time(df):
 
     try:
-
-        t = pd.to_datetime(
-            df["time"].astype(str)
-        )
+        t = pd.to_datetime(df["time"].astype(str))
 
         elapsed = (
             t - t.iloc[0]
@@ -32,7 +29,6 @@ def prepare_time(df):
         return elapsed.to_numpy()
 
     except:
-
         return np.arange(len(df))
 
 
@@ -61,23 +57,21 @@ def detect_cycles(signal):
 
     active = smoothed > threshold
 
-    rising = np.where(
+    rises = np.where(
         (active[1:] == True) &
         (active[:-1] == False)
     )[0]
 
-    falling = np.where(
+    falls = np.where(
         (active[1:] == False) &
         (active[:-1] == True)
     )[0]
 
     cycles = []
 
-    for rise in rising:
+    for rise in rises:
 
-        candidates = falling[
-            falling > rise
-        ]
+        candidates = falls[falls > rise]
 
         if len(candidates) == 0:
             continue
@@ -85,9 +79,7 @@ def detect_cycles(signal):
         fall = candidates[0]
 
         if fall - rise > 300:
-            cycles.append(
-                (rise, fall)
-            )
+            cycles.append((rise, fall))
 
     return cycles
 
@@ -102,31 +94,16 @@ def analyse_cycle(
 
     smoothed = smooth_signal(signal)
 
-    # ---------------------
-    # BASELINE
-    # ---------------------
-
-    baseline_region = smoothed[
-        max(0, start - 300):start
-    ]
-
-    if len(baseline_region) < 50:
-        return None
-
     baseline = np.median(
-        baseline_region
+        smoothed[max(0, start - 300):start]
     )
 
-    # ---------------------
-    # STABLE PLATEAU
-    # ---------------------
-
     plateau_start = start + int(
-        0.4 * (end - start)
+        0.40 * (end - start)
     )
 
     plateau_end = start + int(
-        0.8 * (end - start)
+        0.75 * (end - start)
     )
 
     stable = np.median(
@@ -146,13 +123,8 @@ def analyse_cycle(
 
     gas_on_time = time[start]
 
-    response_signal = smoothed[
-        start:end
-    ]
-
-    response_time = time[
-        start:end
-    ]
+    response_signal = smoothed[start:end]
+    response_time = time[start:end]
 
     target30 = baseline + (
         0.30 * delta
@@ -190,44 +162,20 @@ def analyse_cycle(
     # RECOVERY
     # ---------------------
 
-    gradient = np.gradient(smoothed)
-
-    search_start = max(
-        start + int(
-            0.6 * (end - start)
-        ),
-        start
-    )
-
-    search_end = min(
-        len(smoothed),
-        end + 300
-    )
-
-    grad_region = gradient[
-        search_start:search_end
-    ]
-
-    fall_start = (
-        np.argmin(grad_region)
-        + search_start
-    )
-
-    gas_off_time = time[
-        fall_start
-    ]
+    gas_off_idx = plateau_end
+    gas_off_time = time[gas_off_idx]
 
     recovery_signal = smoothed[
-        fall_start:min(
+        gas_off_idx:min(
             len(smoothed),
-            fall_start + 2500
+            gas_off_idx + 3000
         )
     ]
 
     recovery_time = time[
-        fall_start:min(
+        gas_off_idx:min(
             len(time),
-            fall_start + 2500
+            gas_off_idx + 3000
         )
     ]
 
@@ -298,12 +246,6 @@ if uploaded:
             for c in df.columns
         ]
 
-        if "signal" not in df.columns:
-            st.error(
-                "Column 'signal' not found"
-            )
-            st.stop()
-
         signal = pd.to_numeric(
             df["signal"],
             errors="coerce"
@@ -311,9 +253,7 @@ if uploaded:
 
         mask = signal.notna()
 
-        signal = signal[
-            mask
-        ].to_numpy()
+        signal = signal[mask].to_numpy()
 
         df = df.loc[mask]
 
@@ -327,10 +267,7 @@ if uploaded:
 
         results = []
 
-        for cycle_no, (
-            start,
-            end
-        ) in enumerate(
+        for cycle_no, (start, end) in enumerate(
             cycles,
             start=1
         ):
@@ -343,29 +280,13 @@ if uploaded:
                 cycle_no
             )
 
-            if result is not None:
+            if result:
                 results.append(result)
 
-        if len(results) == 0:
+        results_df = pd.DataFrame(results)
 
-            st.error(
-                "No valid cycles detected."
-            )
-
-            st.stop()
-
-        results_df = pd.DataFrame(
-            results
-        )
-
-        st.subheader(
-            "Cycle Results"
-        )
-
-        st.dataframe(
-            results_df,
-            use_container_width=True
-        )
+        st.subheader("Cycle Results")
+        st.dataframe(results_df)
 
         summary_df = pd.DataFrame({
             "Metric": [
@@ -388,14 +309,8 @@ if uploaded:
             ]
         })
 
-        st.subheader(
-            "Average Results"
-        )
-
-        st.dataframe(
-            summary_df,
-            use_container_width=True
-        )
+        st.subheader("Average Results")
+        st.dataframe(summary_df)
 
         plot_df = pd.DataFrame({
             "Time (s)": time,
@@ -456,6 +371,4 @@ if uploaded:
 
 else:
 
-    st.info(
-        "Upload a file to begin analysis."
-    )
+    st.info("Upload a file to begin analysis.")
