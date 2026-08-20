@@ -16,13 +16,11 @@ uploaded = st.file_uploader(
     type=["xlsx", "csv"]
 )
 
+
 def prepare_time(df):
 
     try:
-
-        t = pd.to_datetime(
-            df["time"].astype(str)
-        )
+        t = pd.to_datetime(df["time"].astype(str))
 
         elapsed = (
             t - t.iloc[0]
@@ -31,7 +29,6 @@ def prepare_time(df):
         return elapsed.to_numpy()
 
     except:
-
         return np.arange(len(df))
 
 
@@ -89,11 +86,11 @@ def detect_cycles(signal):
     return cycles
 
 
-def first_above(sig, tm, target, start_time):
+def first_above(sig, tm, target, ref):
 
     idx = np.where(
         (sig >= target) &
-        (tm >= start_time)
+        (tm >= ref)
     )[0]
 
     if len(idx) == 0:
@@ -102,11 +99,11 @@ def first_above(sig, tm, target, start_time):
     return tm[idx[0]]
 
 
-def first_below(sig, tm, target, start_time):
+def first_below(sig, tm, target, ref):
 
     idx = np.where(
         (sig <= target) &
-        (tm >= start_time)
+        (tm >= ref)
     )[0]
 
     if len(idx) == 0:
@@ -119,32 +116,25 @@ def analyse_cycle(signal, time, start, end, cycle_no):
 
     smoothed = smooth_signal(signal)
 
-    baseline_region = smoothed[
-        max(0, start - 300):start
-    ]
-
-    if len(baseline_region) < 50:
-        return None
-
     baseline = np.median(
-        baseline_region
+        smoothed[max(0, start - 300):start]
     )
 
     plateau_start = start + int(
-        (end - start) * 0.50
+        0.5 * (end - start)
     )
 
     plateau_end = start + int(
-        (end - start) * 0.80
+        0.8 * (end - start)
     )
 
-    plateau = np.median(
+    stable = np.median(
         smoothed[
             plateau_start:plateau_end
         ]
     )
 
-    delta = plateau - baseline
+    delta = stable - baseline
 
     if delta <= 0:
         return None
@@ -155,6 +145,10 @@ def analyse_cycle(signal, time, start, end, cycle_no):
 
     gas_on_time = time[start]
 
+    target30 = baseline + 0.30 * delta
+    target60 = baseline + 0.60 * delta
+    target90 = baseline + 0.90 * delta
+
     response_signal = smoothed[
         max(0, start - 100):end
     ]
@@ -162,10 +156,6 @@ def analyse_cycle(signal, time, start, end, cycle_no):
     response_time = time[
         max(0, start - 100):end
     ]
-
-    target30 = baseline + 0.30 * delta
-    target60 = baseline + 0.60 * delta
-    target90 = baseline + 0.90 * delta
 
     t30 = first_above(
         response_signal,
@@ -188,34 +178,64 @@ def analyse_cycle(signal, time, start, end, cycle_no):
         gas_on_time
     )
 
-    response30 = t30 - gas_on_time
-    response60 = t60 - gas_on_time
-    response90 = t90 - gas_on_time
+    resp30 = t30 - gas_on_time
+    resp60 = t60 - gas_on_time
+    resp90 = t90 - gas_on_time
 
     #
     # RECOVERY
     #
 
-    gas_off_time = time[end]
+    search_start = max(0, end - 200)
+    search_end = min(
+        len(smoothed),
+        end + 200
+    )
+
+    fall_region = smoothed[
+        search_start:search_end
+    ]
+
+    gradient = np.gradient(
+        fall_region
+    )
+
+    fall_start = (
+        np.argmin(gradient)
+        + search_start
+    )
+
+    gas_off_time = time[fall_start]
 
     recovery_signal = smoothed[
-        end:min(
+        fall_start:min(
             len(smoothed),
-            end + 1500
+            fall_start + 1500
         )
     ]
 
     recovery_time = time[
-        end:min(
+        fall_start:min(
             len(time),
-            end + 1500
+            fall_start + 1500
         )
     ]
 
-    rec90_target = baseline + 0.90 * delta
-    rec60_target = baseline + 0.60 * delta
-    rec30_target = baseline + 0.30 * delta
-    rec10_target = baseline + 0.10 * delta
+    rec90_target = baseline + (
+        0.90 * delta
+    )
+
+    rec60_target = baseline + (
+        0.60 * delta
+    )
+
+    rec30_target = baseline + (
+        0.30 * delta
+    )
+
+    rec10_target = baseline + (
+        0.10 * delta
+    )
 
     r90 = first_below(
         recovery_signal,
@@ -245,20 +265,20 @@ def analyse_cycle(signal, time, start, end, cycle_no):
         gas_off_time
     )
 
-    recovery90 = r90 - gas_off_time
-    recovery60 = r60 - gas_off_time
-    recovery30 = r30 - gas_off_time
-    recovery10 = r10 - gas_off_time
+    rec90 = r90 - gas_off_time
+    rec60 = r60 - gas_off_time
+    rec30 = r30 - gas_off_time
+    rec10 = r10 - gas_off_time
 
     return {
         "Cycle": cycle_no,
-        "T30 Response (s)": round(response30, 2),
-        "T60 Response (s)": round(response60, 2),
-        "T90 Response (s)": round(response90, 2),
-        "T90 Recovery (s)": round(recovery90, 2),
-        "T60 Recovery (s)": round(recovery60, 2),
-        "T30 Recovery (s)": round(recovery30, 2),
-        "T10 Recovery (s)": round(recovery10, 2)
+        "T30 Response (s)": round(resp30, 2),
+        "T60 Response (s)": round(resp60, 2),
+        "T90 Response (s)": round(resp90, 2),
+        "T90 Recovery (s)": round(rec90, 2),
+        "T60 Recovery (s)": round(rec60, 2),
+        "T30 Recovery (s)": round(rec30, 2),
+        "T10 Recovery (s)": round(rec10, 2)
     }
 
 
@@ -317,14 +337,8 @@ if uploaded:
 
         results_df = pd.DataFrame(results)
 
-        st.subheader(
-            "Cycle Results"
-        )
-
-        st.dataframe(
-            results_df,
-            use_container_width=True
-        )
+        st.subheader("Cycle Results")
+        st.dataframe(results_df)
 
         numeric_cols = [
             c for c in results_df.columns
@@ -343,14 +357,8 @@ if uploaded:
             ]
         })
 
-        st.subheader(
-            "Average Results"
-        )
-
-        st.dataframe(
-            summary_df,
-            use_container_width=True
-        )
+        st.subheader("Average Results")
+        st.dataframe(summary_df)
 
         plot_df = pd.DataFrame({
             "Time (s)": time,
@@ -360,8 +368,7 @@ if uploaded:
         fig = px.line(
             plot_df,
             x="Time (s)",
-            y="Signal",
-            title="Sensor Response"
+            y="Signal"
         )
 
         for start, end in cycles:
@@ -406,11 +413,7 @@ if uploaded:
         )
 
     except Exception as e:
-
         st.error(str(e))
 
 else:
-
-    st.info(
-        "Upload a file to begin."
-    )
+    st.info("Upload a file to begin.")
