@@ -284,14 +284,14 @@ def analyse_cycle(
         )
 
     response_signal = smoothed[
-        gas_on_idx:
-        gas_off_idx
-    ]
+    gas_on_idx:
+    gas_off_idx
+]
 
-        response_time = time[
-        gas_on_idx:
-        gas_off_idx
-    ]
+    response_time = time[
+    gas_on_idx:
+    gas_off_idx
+]
 
     t63_cross = interpolate_crossing(
         response_signal,
