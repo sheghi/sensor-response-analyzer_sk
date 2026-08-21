@@ -274,19 +274,31 @@ def analyse_cycle(
 
     response100 = plateau
 
-    response90 = (
-        response100 * 0.90
-    )
+    response90_display = (
+    response100 * 0.90
+   )
 
-    response63 = (
-        response100 * 0.63
-    )
+    response63_display = (
+    response100 * 0.63
+   )
 
-    response_signal = smoothed[
+   st.write(
+    "Response63 display =",
+    response63_display
+   )
+
+    st.write(
+    "Response90 display =",
+    response90_display
+   )
+   response_signal = (
+    smoothed[
         gas_on_idx:
         gas_off_idx
-    ]
-
+    ] - baseline
+) / (
+    response100 - baseline
+)
     response_time = time[
     gas_on_idx:
     gas_off_idx
@@ -305,20 +317,21 @@ def analyse_cycle(
         np.min(response_signal)
     )
     
-
     t63_cross = interpolate_crossing(
-        response_signal,
-        response_time,
-        response63,
-        rising=response_up
+    response_signal,
+    response_time,
+    0.63,
+    rising=True
     )
 
     t90_cross = interpolate_crossing(
-        response_signal,
-        response_time,
-        response90,
-        rising=response_up
+    response_signal,
+    response_time,
+    0.90,
+    rising=True
     )
+
+
 
     t63 = np.nan
     t90 = np.nan
