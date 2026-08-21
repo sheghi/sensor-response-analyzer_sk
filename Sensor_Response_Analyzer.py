@@ -307,8 +307,8 @@ t90_cross = interpolate_crossing(
     rising=response_up
 )
 
-    t63 = np.nan
-    t90 = np.nan
+t63 = np.nan
+t90 = np.nan
 
     if not np.isnan(t63_cross):
         t63 = (
