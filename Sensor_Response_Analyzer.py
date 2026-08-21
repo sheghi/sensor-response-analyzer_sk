@@ -280,9 +280,7 @@ def analyse_cycle(
    
 
     response63 = (
-
-            response100 * 0.63
-           
+            response100 * 0.63  
         )
 
     response_signal = smoothed[
