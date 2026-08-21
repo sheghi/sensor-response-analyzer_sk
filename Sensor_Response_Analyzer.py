@@ -275,23 +275,22 @@ def analyse_cycle(
     response100 = plateau
 
     response90 = (
-            response100 * 0.90
-        )
-   
+        response100 * 0.90
+    )
 
     response63 = (
-            response100 * 0.63  
-        )
+        response100 * 0.63
+    )
 
     response_signal = smoothed[
-    gas_on_idx:
-    gas_off_idx
-]
+        gas_on_idx:
+        gas_off_idx
+    ]
 
     response_time = time[
-    gas_on_idx:
-    gas_off_idx
-]
+        gas_on_idx:
+        gas_off_idx
+    ]
 
     t63_cross = interpolate_crossing(
         response_signal,
@@ -299,20 +298,28 @@ def analyse_cycle(
         response63,
         rising=response_up
     )
-t63 = np.nan
-t90 = np.nan
 
-if not np.isnan(t63_cross):
-    t63 = (
-        t63_cross
-        - gas_on_time
+    t90_cross = interpolate_crossing(
+        response_signal,
+        response_time,
+        response90,
+        rising=response_up
     )
 
-if not np.isnan(t90_cross):
-    t90 = (
-        t90_cross
-        - gas_on_time
-    )
+    t63 = np.nan
+    t90 = np.nan
+
+    if not np.isnan(t63_cross):
+        t63 = (
+            t63_cross
+            - gas_on_time
+        )
+
+    if not np.isnan(t90_cross):
+        t90 = (
+            t90_cross
+            - gas_on_time
+        )
 
     recovery_signal = smoothed[
         gas_off_idx:
@@ -367,19 +374,19 @@ if not np.isnan(t90_cross):
         ),
 
         "Response 100%": round(
-    float(response100),
-    4
-),
+            float(response100),
+            4
+        ),
 
-"Response 90%": round(
-    float(response90),
-    4
-),
+        "Response 90%": round(
+            float(response90),
+            4
+        ),
 
-"Response 63%": round(
-    float(response63),
-    4
-),
+        "Response 63%": round(
+            float(response63),
+            4
+        ),
 
         "Amplitude": round(
             float(delta),
