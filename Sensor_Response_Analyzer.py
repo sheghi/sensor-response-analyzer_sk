@@ -427,9 +427,10 @@ def analyse_cycle(
             2
         ) if not np.isnan(t10) else np.nan
     }
-    if uploaded:
 
-       try:
+if uploaded:
+
+    try:
 
         if uploaded.name.endswith(".csv"):
 
