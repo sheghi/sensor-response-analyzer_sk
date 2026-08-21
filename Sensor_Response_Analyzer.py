@@ -282,15 +282,6 @@ def analyse_cycle(
     response100 * 0.63
    )
 
-   st.write(
-    "Response63 display =",
-    response63_display
-   )
-
-    st.write(
-    "Response90 display =",
-    response90_display
-   )
    response_signal = (
     smoothed[
         gas_on_idx:
