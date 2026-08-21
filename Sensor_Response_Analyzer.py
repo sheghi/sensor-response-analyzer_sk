@@ -276,13 +276,14 @@ def analyse_cycle(
 
     response63 = baseline + (
         0.63 * (
-            response100 - baseline
+            response100 * 0.63
         )
     )
 
-    response90 = baseline + (
-        0.90 * (
-            response100 - baseline
+    response90 = (
+
+            response100 * 0.90
+           
         )
     )
 
