@@ -294,18 +294,18 @@ def analyse_cycle(
     ]
 
     t63_cross = interpolate_crossing(
-        response_signal,
-        response_time,
-        response63,
-        rising=response_up
-    )
+    response_signal,
+    response_time,
+    response63,
+    rising=response_up
+)
 
-    t90_cross = interpolate_crossing(
-        response_signal,
-        response_time,
-        response90,
-        rising=response_up
-    )
+t90_cross = interpolate_crossing(
+    response_signal,
+    response_time,
+    response90,
+    rising=response_up
+)
 
     t63 = np.nan
     t90 = np.nan
@@ -375,19 +375,19 @@ def analyse_cycle(
         ),
 
         "Response 100%": round(
-            float(response100),
-            4
-        ),
+    float(response100),
+    4
+),
 
-        "Response 90%": round(
-            float(response90),
-            4
-        ),
+"Response 90%": round(
+    float(response90),
+    4
+),
 
-        "Response 63%": round(
-            float(response63),
-            4
-        ),
+"Response 63%": round(
+    float(response63),
+    4
+),
 
         "Amplitude": round(
             float(delta),
