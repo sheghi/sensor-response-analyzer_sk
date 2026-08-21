@@ -429,7 +429,7 @@ def analyse_cycle(
     }
     if uploaded:
 
-    try:
+       try:
 
         if uploaded.name.endswith(".csv"):
 
