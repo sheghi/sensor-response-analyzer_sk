@@ -304,19 +304,6 @@ def analyse_cycle(
     gas_off_idx
     ]
 
-    st.write("Response100 =", response100)
-    st.write("Response63 =", response63)
-
-    st.write(
-        "Maximum response signal =",
-        np.max(response_signal)
-    )
-
-    st.write(
-        "Minimum response signal =",
-        np.min(response_signal)
-    )
-    
     t63_cross = interpolate_crossing(
     response_signal,
     response_time,
