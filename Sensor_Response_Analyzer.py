@@ -271,36 +271,48 @@ def analyse_cycle(
     response_up = (
         delta > 0
     )
-
     response100 = plateau
 
     response90_display = (
-    response100 * 0.90
-   )
+        response100 * 0.90
+    )
 
     response63_display = (
-    response100 * 0.63
-   )
+        response100 * 0.63
+    )
 
-   response_signal = (
-    smoothed[
+    response90 = 0.90
+
+    response63 = 0.63
+
+    response_signal = (
+        smoothed[
+            gas_on_idx:
+            gas_off_idx
+        ] - baseline
+    ) / (
+        response100 - baseline
+    )
+
+    response_time = time[
         gas_on_idx:
         gas_off_idx
-    ] - baseline
-) / (
-    response100 - baseline
-)
-    response_time = time[
-    gas_on_idx:
-    gas_off_idx
     ]
 
     t63_cross = interpolate_crossing(
-    response_signal,
-    response_time,
-    0.63,
-    rising=True
+        response_signal,
+        response_time,
+        0.63,
+        rising=True
     )
+
+    t90_cross = interpolate_crossing(
+        response_signal,
+        response_time,
+        0.90,
+        rising=True
+    )
+
 
     t90_cross = interpolate_crossing(
     response_signal,
@@ -384,13 +396,13 @@ def analyse_cycle(
         ),
 
         "Response 90%": round(
-            float(response90),
-            4
+           float(response90_display),
+           4
         ),
 
-        "Response 63%": round(
-            float(response63),
-            4
+       "Response 63%": round(
+         float(response63_display),
+          4
         ),
 
         "Amplitude": round(
