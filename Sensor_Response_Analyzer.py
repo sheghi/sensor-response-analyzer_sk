@@ -169,10 +169,6 @@ def analyse_cycle(
 
     grad = np.gradient(smoothed)
 
-    # -------------------------
-    # GAS ON DETECTION
-    # -------------------------
-
     rise_window_start = max(
         0,
         start - 200
@@ -210,10 +206,6 @@ def analyse_cycle(
     gas_on_time = time[
         gas_on_idx
     ]
-
-    # -------------------------
-    # GAS OFF DETECTION
-    # -------------------------
 
     fall_window_start = max(
         gas_on_idx + 200,
@@ -254,20 +246,12 @@ def analyse_cycle(
         gas_off_idx
     ]
 
-    # -------------------------
-    # BASELINE
-    # -------------------------
-
     baseline = np.mean(
         smoothed[
             max(0, gas_on_idx - 200):
             gas_on_idx
         ]
     )
-
-    # -------------------------
-    # 100% RESPONSE
-    # -------------------------
 
     plateau = np.mean(
         smoothed[
@@ -288,9 +272,19 @@ def analyse_cycle(
         delta > 0
     )
 
-    # -------------------------
-    # RESPONSE
-    # -------------------------
+    response100 = plateau
+
+    response63 = baseline + (
+        0.63 * (
+            response100 - baseline
+        )
+    )
+
+    response90 = baseline + (
+        0.90 * (
+            response100 - baseline
+        )
+    )
 
     response_signal = smoothed[
         gas_on_idx:
@@ -302,25 +296,17 @@ def analyse_cycle(
         gas_off_idx
     ]
 
-    target63 = baseline + (
-        0.63 * delta
-    )
-
-    target90 = baseline + (
-        0.90 * delta
-    )
-
     t63_cross = interpolate_crossing(
         response_signal,
         response_time,
-        target63,
+        response63,
         rising=response_up
     )
 
     t90_cross = interpolate_crossing(
         response_signal,
         response_time,
-        target90,
+        response90,
         rising=response_up
     )
 
@@ -339,10 +325,6 @@ def analyse_cycle(
             - gas_on_time
         )
 
-    # -------------------------
-    # RECOVERY
-    # -------------------------
-
     recovery_signal = smoothed[
         gas_off_idx:
     ]
@@ -351,30 +333,24 @@ def analyse_cycle(
         gas_off_idx:
     ]
 
-    target37 = baseline + (
-        0.37 * delta
-    )
-
-    target10 = baseline + (
-        0.10 * delta
-    )
-
-    recovery_rising = (
-        not response_up
+    recovery_norm = (
+        recovery_signal - baseline
+    ) / (
+        response100 - baseline
     )
 
     t37_cross = interpolate_crossing(
-        recovery_signal,
+        recovery_norm,
         recovery_time,
-        target37,
-        rising=recovery_rising
+        0.37,
+        rising=False
     )
 
     t10_cross = interpolate_crossing(
-        recovery_signal,
+        recovery_norm,
         recovery_time,
-        target10,
-        rising=recovery_rising
+        0.10,
+        rising=False
     )
 
     t37 = np.nan
@@ -402,7 +378,17 @@ def analyse_cycle(
         ),
 
         "Response 100%": round(
-            float(plateau),
+            float(response100),
+            4
+        ),
+
+        "Response 90%": round(
+            float(response90),
+            4
+        ),
+
+        "Response 63%": round(
+            float(response63),
             4
         ),
 
@@ -441,9 +427,7 @@ def analyse_cycle(
             2
         ) if not np.isnan(t10) else np.nan
     }
-
-
-if uploaded:
+    if uploaded:
 
     try:
 
@@ -668,3 +652,4 @@ else:
     st.info(
         "Upload a file to begin analysis."
     )
+`
