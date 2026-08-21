@@ -292,8 +292,7 @@ def analyse_cycle(
         gas_on_idx:
         gas_off_idx
     ]
-
-    t63_cross = interpolate_crossing(
+t63_cross = interpolate_crossing(
     response_signal,
     response_time,
     response63,
@@ -310,17 +309,17 @@ t90_cross = interpolate_crossing(
 t63 = np.nan
 t90 = np.nan
 
-    if not np.isnan(t63_cross):
-        t63 = (
-            t63_cross
-            - gas_on_time
-        )
+if not np.isnan(t63_cross):
+    t63 = (
+        t63_cross
+        - gas_on_time
+    )
 
-    if not np.isnan(t90_cross):
-        t90 = (
-            t90_cross
-            - gas_on_time
-        )
+if not np.isnan(t90_cross):
+    t90 = (
+        t90_cross
+        - gas_on_time
+    )
 
     recovery_signal = smoothed[
         gas_off_idx:
