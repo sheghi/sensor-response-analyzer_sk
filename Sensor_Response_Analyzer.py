@@ -288,24 +288,17 @@ def analyse_cycle(
         gas_off_idx
     ]
 
-    response_time = time[
+        response_time = time[
         gas_on_idx:
         gas_off_idx
     ]
-t63_cross = interpolate_crossing(
-    response_signal,
-    response_time,
-    response63,
-    rising=response_up
-)
 
-t90_cross = interpolate_crossing(
-    response_signal,
-    response_time,
-    response90,
-    rising=response_up
-)
-
+    t63_cross = interpolate_crossing(
+        response_signal,
+        response_time,
+        response63,
+        rising=response_up
+    )
 t63 = np.nan
 t90 = np.nan
 
