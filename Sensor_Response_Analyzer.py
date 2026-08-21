@@ -274,18 +274,16 @@ def analyse_cycle(
 
     response100 = plateau
 
-    response63 = baseline + (
-        0.63 * (
-            response100 * 0.63
-        )
-    )
-
     response90 = (
-
             response100 * 0.90
+        )
+   
+
+    response63 = (
+
+            response100 * 0.63
            
         )
-    )
 
     response_signal = smoothed[
         gas_on_idx:
