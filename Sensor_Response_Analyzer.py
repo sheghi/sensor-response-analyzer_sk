@@ -4,11 +4,6 @@ import numpy as np
 import plotly.graph_objects as go
 from io import BytesIO
 
-
-# ==================================================
-# PAGE SETTINGS
-# ==================================================
-
 st.set_page_config(
     page_title="Gas Sensor Response Analyzer",
     layout="wide"
@@ -94,7 +89,7 @@ def interpolate_crossing(
             y1 = signal[i - 1]
             y2 = signal[i]
 
-            if y2 == y1:
+            if y1 == y2:
                 return x1
 
             return x1 + (
@@ -107,7 +102,7 @@ def interpolate_crossing(
 
 
 # ==================================================
-# CYCLE DETECTION
+# IMPROVED CYCLE DETECTION
 # ==================================================
 
 def detect_cycles(signal):
@@ -116,50 +111,70 @@ def detect_cycles(signal):
 
     gradient = np.gradient(smoothed)
 
-    threshold = 2.5 * np.std(gradient)
+    rise_threshold = np.percentile(
+        gradient,
+        99
+    )
 
-    rise_points = np.where(
-        gradient > threshold
+    fall_threshold = np.percentile(
+        gradient,
+        1
+    )
+
+    rises = np.where(
+        gradient >= rise_threshold
     )[0]
 
-    fall_points = np.where(
-        gradient < -threshold
+    falls = np.where(
+        gradient <= fall_threshold
     )[0]
 
-    if len(rise_points) == 0:
-        return []
+    min_gap = 30
 
-    min_gap = 50
+    rise_list = []
 
-    rises = [rise_points[0]]
+    for r in rises:
 
-    for p in rise_points[1:]:
+        if (
+            len(rise_list) == 0
+            or r - rise_list[-1] > min_gap
+        ):
 
-        if p - rises[-1] > min_gap:
-            rises.append(p)
+            rise_list.append(r)
 
-    falls = [fall_points[0]]
+    fall_list = []
 
-    for p in fall_points[1:]:
+    for f in falls:
 
-        if p - falls[-1] > min_gap:
-            falls.append(p)
+        if (
+            len(fall_list) == 0
+            or f - fall_list[-1] > min_gap
+        ):
+
+            fall_list.append(f)
 
     cycles = []
 
-    for rise in rises:
+    for rise in rise_list:
 
         future_falls = [
-            f for f in falls
+            f for f in fall_list
             if f > rise
         ]
 
         if len(future_falls) == 0:
             continue
 
-        cycles.append(
-            (rise, future_falls[0])
-        )
+        fall = future_falls[0]
+
+        if fall - rise > 20:
+
+            cycles.append(
+                (
+                    rise,
+                    fall
+                )
+            )
 
     return cycles
 
@@ -200,10 +215,8 @@ def analyse_cycle(
         return None
 
     response_signal = (
-
         smoothed[start:end]
         - baseline
-
     ) / amplitude
 
     response_time = time[start:end]
@@ -231,10 +244,8 @@ def analyse_cycle(
     ) if not np.isnan(t90_cross) else np.nan
 
     recovery_signal = (
-
         smoothed[end:]
         - baseline
-
     ) / amplitude
 
     recovery_time = time[end:]
@@ -264,20 +275,19 @@ def analyse_cycle(
     return {
 
         "Cycle": cycle_number,
-        "Baseline": round(baseline, 4),
-        "Response 100%": round(plateau, 4),
-        "Amplitude": round(amplitude, 4),
-        "Gas ON (s)": round(time[start], 2),
-        "Gas OFF (s)": round(time[end], 2),
-        "T63 Response (s)": round(t63, 2)
+        "Baseline": round(float(baseline), 4),
+        "Response 100%": round(float(plateau), 4),
+        "Amplitude": round(float(amplitude), 4),
+        "Gas ON (s)": round(float(time[start]), 2),
+        "Gas OFF (s)": round(float(time[end]), 2),
+        "T63 Response (s)": round(float(t63), 2)
         if not np.isnan(t63) else np.nan,
-        "T90 Response (s)": round(t90, 2)
+        "T90 Response (s)": round(float(t90), 2)
         if not np.isnan(t90) else np.nan,
-        "T37 Recovery (s)": round(t37, 2)
+        "T37 Recovery (s)": round(float(t37), 2)
         if not np.isnan(t37) else np.nan,
-        "T10 Recovery (s)": round(t10, 2)
+        "T10 Recovery (s)": round(float(t10), 2)
         if not np.isnan(t10) else np.nan
-
     }
 
 
@@ -320,6 +330,19 @@ if uploaded is not None:
 
         time = prepare_time(df)
 
+        # Debug plot
+
+        st.subheader("Raw Signal")
+
+        debug_df = pd.DataFrame({
+            "Time": time,
+            "Signal": signal
+        })
+
+        st.line_chart(
+            debug_df.set_index("Time")
+        )
+
         cycles = detect_cycles(signal)
 
         st.success(
@@ -342,6 +365,7 @@ if uploaded is not None:
             )
 
             if result is not None:
+
                 results.append(result)
 
         if len(results) == 0:
@@ -366,17 +390,15 @@ if uploaded is not None:
         fig = go.Figure()
 
         fig.add_trace(
-
             go.Scatter(
                 x=time,
                 y=signal,
                 mode="lines",
                 name="Signal"
             )
-
         )
 
-        for start, end in cycles:
+        for i, (start, end) in enumerate(cycles):
 
             fig.add_vrect(
                 x0=time[start],
@@ -385,6 +407,38 @@ if uploaded is not None:
                 opacity=0.15,
                 line_width=0
             )
+
+            fig.add_trace(
+                go.Scatter(
+                    x=[time[start]],
+                    y=[signal[start]],
+                    mode="markers",
+                    marker=dict(
+                        size=10,
+                        color="green"
+                    ),
+                    name=f"Cycle {i+1} ON"
+                )
+            )
+
+            fig.add_trace(
+                go.Scatter(
+                    x=[time[end]],
+                    y=[signal[end]],
+                    mode="markers",
+                    marker=dict(
+                        size=10,
+                        color="red"
+                    ),
+                    name=f"Cycle {i+1} OFF"
+                )
+            )
+
+        fig.update_layout(
+            title="Detected Cycles",
+            xaxis_title="Time (s)",
+            yaxis_title="Signal"
+        )
 
         st.plotly_chart(
             fig,
