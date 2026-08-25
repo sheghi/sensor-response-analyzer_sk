@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 from io import BytesIO
 
 # =====================================================
-# PAGE
+# PAGE SETUP
 # =====================================================
 
 st.set_page_config(
@@ -40,11 +40,11 @@ def prepare_time(df):
                 * 86400
             ).to_numpy()
 
-    except:
+    except Exception:
+
         pass
 
     return np.arange(len(df))
-
 
 # =====================================================
 # SMOOTHING
@@ -63,7 +63,6 @@ def smooth_signal(signal):
         .ffill()
         .to_numpy()
     )
-
 
 # =====================================================
 # CYCLE DETECTION
@@ -118,7 +117,6 @@ def detect_cycles(signal):
 
     return cycles
 
-
 # =====================================================
 # INTERPOLATION
 # =====================================================
@@ -154,22 +152,20 @@ def interpolate_crossing(
             y1 = signal[i - 1]
             y2 = signal[i]
 
-            if y1 == y2:
+            if y2 == y1:
                 return x1
 
-            fraction = (
+            frac = (
                 target - y1
             ) / (
                 y2 - y1
             )
 
-            return x1 + (
-                fraction
-                * (x2 - x1)
+            return x1 + frac * (
+                x2 - x1
             )
 
     return np.nan
-
 
 # =====================================================
 # ANALYSIS
@@ -187,20 +183,31 @@ def analyse_cycle(
 
     baseline = np.mean(
         smoothed[
-            max(0, start - 100):start
+            max(0, start - 80):
+            max(start - 10, 1)
         ]
+    )
+
+    plateau_start = start + int(
+        0.6 * (end - start)
     )
 
     plateau = np.mean(
         smoothed[
-            max(start, end - 50):end
+            plateau_start:
+            max(end - 5, plateau_start + 1)
         ]
     )
 
     amplitude = plateau - baseline
 
-    if abs(amplitude) < 0.05:
+    if amplitude <= 0.05:
+
         return None
+
+    # ---------------------
+    # RESPONSE
+    # ---------------------
 
     response_signal = (
         smoothed[start:end]
@@ -223,12 +230,48 @@ def analyse_cycle(
         True
     )
 
+    t63 = np.nan
+    t90 = np.nan
+
+    if not np.isnan(t63_cross):
+
+        t63 = (
+            t63_cross
+            - time[start]
+        )
+
+    if not np.isnan(t90_cross):
+
+        t90 = (
+            t90_cross
+            - time[start]
+        )
+
+    if np.isnan(t63):
+
+        if not np.isnan(t90):
+
+            t63 = t90 / 2.3
+
+    # ---------------------
+    # RECOVERY
+    # ---------------------
+
+    recovery_end = min(
+        len(smoothed),
+        end + 250
+    )
+
     recovery_signal = (
-        smoothed[end:]
+        smoothed[
+            end:recovery_end
+        ]
         - baseline
     ) / amplitude
 
-    recovery_time = time[end:]
+    recovery_time = time[
+        end:recovery_end
+    ]
 
     t37_cross = interpolate_crossing(
         recovery_signal,
@@ -244,47 +287,65 @@ def analyse_cycle(
         False
     )
 
-    t63 = (
-        t63_cross - time[start]
-    ) if not np.isnan(t63_cross) else np.nan
+    t37 = np.nan
+    t10 = np.nan
 
-    t90 = (
-        t90_cross - time[start]
-    ) if not np.isnan(t90_cross) else np.nan
+    if not np.isnan(t37_cross):
 
-    t37 = (
-        t37_cross - time[end]
-    ) if not np.isnan(t37_cross) else np.nan
+        t37 = (
+            t37_cross
+            - time[end]
+        )
 
-    t10 = (
-        t10_cross - time[end]
-    ) if not np.isnan(t10_cross) else np.nan
+    if not np.isnan(t10_cross):
+
+        t10 = (
+            t10_cross
+            - time[end]
+        )
+
+    # remove unrealistic values
+
+    if not np.isnan(t37):
+
+        if t37 < 0 or t37 > 60:
+
+            t37 = np.nan
+
+    if not np.isnan(t10):
+
+        if t10 < 0 or t10 > 120:
+
+            t10 = np.nan
 
     return {
 
         "Cycle": cycle_no,
 
-        "T63 Response (s)": round(
-            float(t63),
-            2
-        ) if not np.isnan(t63) else np.nan,
+        "T63 Response (s)": (
+            round(float(t63), 2)
+            if not np.isnan(t63)
+            else np.nan
+        ),
 
-        "T90 Response (s)": round(
-            float(t90),
-            2
-        ) if not np.isnan(t90) else np.nan,
+        "T90 Response (s)": (
+            round(float(t90), 2)
+            if not np.isnan(t90)
+            else np.nan
+        ),
 
-        "T37 Recovery (s)": round(
-            float(t37),
-            2
-        ) if not np.isnan(t37) else np.nan,
+        "T37 Recovery (s)": (
+            round(float(t37), 2)
+            if not np.isnan(t37)
+            else np.nan
+        ),
 
-        "T10 Recovery (s)": round(
-            float(t10),
-            2
-        ) if not np.isnan(t10) else np.nan
+        "T10 Recovery (s)": (
+            round(float(t10), 2)
+            if not np.isnan(t10)
+            else np.nan
+        )
     }
-
 
 # =====================================================
 # MAIN
@@ -312,7 +373,6 @@ if uploaded is not None:
             st.error(
                 "Column 'signal' not found."
             )
-
             st.stop()
 
         signal = pd.to_numeric(
@@ -346,7 +406,7 @@ if uploaded is not None:
             start=1
         ):
 
-            res = analyse_cycle(
+            result = analyse_cycle(
                 signal,
                 time,
                 start,
@@ -354,63 +414,56 @@ if uploaded is not None:
                 cycle_no
             )
 
-            if res is not None:
+            if result is not None:
 
-                results.append(res)
+                results.append(result)
 
         if len(results) == 0:
 
             st.error(
-                "No valid cycles detected."
+                "No valid cycles found."
             )
-
             st.stop()
 
         results_df = pd.DataFrame(results)
 
-        average_row = pd.DataFrame([{
+        numeric_cols = [
 
-            "Cycle": "Average",
+            "T63 Response (s)",
+            "T90 Response (s)",
+            "T37 Recovery (s)",
+            "T10 Recovery (s)"
 
-            "T63 Response (s)":
-                round(
-                    results_df[
-                        "T63 Response (s)"
-                    ].mean(),
-                    2
-                ),
+        ]
 
-            "T90 Response (s)":
-                round(
-                    results_df[
-                        "T90 Response (s)"
-                    ].mean(),
-                    2
-                ),
+        average_row = {
 
-            "T37 Recovery (s)":
-                round(
-                    results_df[
-                        "T37 Recovery (s)"
-                    ].mean(),
-                    2
-                ),
+            "Cycle": "Average"
 
-            "T10 Recovery (s)":
-                round(
-                    results_df[
-                        "T10 Recovery (s)"
-                    ].mean(),
-                    2
-                )
-        }])
+        }
+
+        for col in numeric_cols:
+
+            average_row[col] = round(
+
+                pd.to_numeric(
+                    results_df[col],
+                    errors="coerce"
+                ).mean(),
+
+                2
+
+            )
 
         results_df = pd.concat(
+
             [
                 results_df,
-                average_row
+                pd.DataFrame([average_row])
             ],
+
             ignore_index=True
+
         )
 
         st.subheader(
@@ -419,18 +472,25 @@ if uploaded is not None:
 
         st.dataframe(
             results_df,
-            use_container_width=True
+            use_container_width=True,
+            hide_index=True
         )
+
+        # ===============================
+        # PLOT
+        # ===============================
 
         fig = go.Figure()
 
         fig.add_trace(
+
             go.Scatter(
                 x=time,
                 y=signal,
                 mode="lines",
                 name="Signal"
             )
+
         )
 
         for start, end in cycles:
@@ -454,6 +514,10 @@ if uploaded is not None:
             use_container_width=True
         )
 
+        # ===============================
+        # EXPORT
+        # ===============================
+
         buffer = BytesIO()
 
         with pd.ExcelWriter(
@@ -468,7 +532,7 @@ if uploaded is not None:
             )
 
         st.download_button(
-            label="Download Analysis",
+            "Download Analysis",
             data=buffer.getvalue(),
             file_name="sensor_response_analysis.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
