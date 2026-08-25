@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 from io import BytesIO
 
 # =====================================================
-# PAGE SETUP
+# PAGE
 # =====================================================
 
 st.set_page_config(
@@ -21,22 +21,22 @@ uploaded = st.file_uploader(
 )
 
 # =====================================================
-# TIME CONVERSION
+# TIME
 # =====================================================
 
 def prepare_time(df):
 
     try:
 
-        time_col = pd.to_numeric(
+        t = pd.to_numeric(
             df["time"],
             errors="coerce"
         )
 
-        if time_col.notna().all():
+        if t.notna().all():
 
             return (
-                (time_col - time_col.iloc[0])
+                (t - t.iloc[0])
                 * 86400
             ).to_numpy()
 
@@ -47,7 +47,7 @@ def prepare_time(df):
 
 
 # =====================================================
-# SMOOTH SIGNAL
+# SMOOTHING
 # =====================================================
 
 def smooth_signal(signal):
@@ -66,7 +66,7 @@ def smooth_signal(signal):
 
 
 # =====================================================
-# DETECT CYCLES USING THRESHOLD
+# CYCLE DETECTION
 # =====================================================
 
 def detect_cycles(signal):
@@ -78,10 +78,10 @@ def detect_cycles(signal):
         + np.percentile(smoothed, 75)
     ) / 2
 
-    gas_on = smoothed > threshold
+    state = smoothed > threshold
 
     transitions = np.diff(
-        gas_on.astype(int)
+        state.astype(int)
     )
 
     rises = np.where(
@@ -109,8 +109,8 @@ def detect_cycles(signal):
 
         cycles.append(
             (
-                rise,
-                falls[fall_idx]
+                int(rise),
+                int(falls[fall_idx])
             )
         )
 
@@ -120,7 +120,7 @@ def detect_cycles(signal):
 
 
 # =====================================================
-# CROSSING DETECTION
+# INTERPOLATION
 # =====================================================
 
 def interpolate_crossing(
@@ -157,17 +157,22 @@ def interpolate_crossing(
             if y1 == y2:
                 return x1
 
+            fraction = (
+                target - y1
+            ) / (
+                y2 - y1
+            )
+
             return x1 + (
-                (target - y1)
+                fraction
                 * (x2 - x1)
-                / (y2 - y1)
             )
 
     return np.nan
 
 
 # =====================================================
-# ANALYSE SINGLE CYCLE
+# ANALYSIS
 # =====================================================
 
 def analyse_cycle(
@@ -182,15 +187,13 @@ def analyse_cycle(
 
     baseline = np.mean(
         smoothed[
-            max(0, start - 100):
-            start
+            max(0, start - 100):start
         ]
     )
 
     plateau = np.mean(
         smoothed[
-            max(start, end - 50):
-            end
+            max(start, end - 50):end
         ]
     )
 
@@ -210,24 +213,15 @@ def analyse_cycle(
         response_signal,
         response_time,
         0.63,
-        rising=True
+        True
     )
 
     t90_cross = interpolate_crossing(
         response_signal,
         response_time,
         0.90,
-        rising=True
+        True
     )
-
-    t63 = np.nan
-    t90 = np.nan
-
-    if not np.isnan(t63_cross):
-        t63 = t63_cross - time[start]
-
-    if not np.isnan(t90_cross):
-        t90 = t90_cross - time[start]
 
     recovery_signal = (
         smoothed[end:]
@@ -240,53 +234,35 @@ def analyse_cycle(
         recovery_signal,
         recovery_time,
         0.37,
-        rising=False
+        False
     )
 
     t10_cross = interpolate_crossing(
         recovery_signal,
         recovery_time,
         0.10,
-        rising=False
+        False
     )
 
-    t37 = np.nan
-    t10 = np.nan
+    t63 = (
+        t63_cross - time[start]
+    ) if not np.isnan(t63_cross) else np.nan
 
-    if not np.isnan(t37_cross):
-        t37 = t37_cross - time[end]
+    t90 = (
+        t90_cross - time[start]
+    ) if not np.isnan(t90_cross) else np.nan
 
-    if not np.isnan(t10_cross):
-        t10 = t10_cross - time[end]
+    t37 = (
+        t37_cross - time[end]
+    ) if not np.isnan(t37_cross) else np.nan
+
+    t10 = (
+        t10_cross - time[end]
+    ) if not np.isnan(t10_cross) else np.nan
 
     return {
 
         "Cycle": cycle_no,
-
-        "Baseline": round(
-            float(baseline),
-            4
-        ),
-
-        "Response 100%": round(
-            float(plateau),
-            4
-        ),
-
-        "Amplitude": round(
-            float(amplitude),
-            4
-        ),
-
-        "Gas ON (s)": round(
-            float(time[start]),
-            2
-        ),
-
-        "Gas OFF (s)": round(
-            float(time[end]),
-            2
-        ),
 
         "T63 Response (s)": round(
             float(t63),
@@ -344,34 +320,21 @@ if uploaded is not None:
             errors="coerce"
         )
 
-        valid = signal.notna()
+        mask = signal.notna()
 
         signal = signal[
-            valid
+            mask
         ].to_numpy()
 
-        df = df.loc[valid]
+        df = df.loc[mask]
 
         time = prepare_time(df)
 
-        st.subheader("Raw Signal")
-
-        plot_df = pd.DataFrame({
-
-            "Time": time,
-            "Signal": signal
-
-        })
-
-        st.line_chart(
-            plot_df.set_index("Time")
-        )
-
         cycles = detect_cycles(signal)
 
-        st.write("Detected cycles:")
-
-        st.write(cycles)
+        st.success(
+            f"Detected {len(cycles)} cycles"
+        )
 
         results = []
 
@@ -383,7 +346,7 @@ if uploaded is not None:
             start=1
         ):
 
-            result = analyse_cycle(
+            res = analyse_cycle(
                 signal,
                 time,
                 start,
@@ -391,9 +354,9 @@ if uploaded is not None:
                 cycle_no
             )
 
-            if result is not None:
+            if res is not None:
 
-                results.append(result)
+                results.append(res)
 
         if len(results) == 0:
 
@@ -404,6 +367,51 @@ if uploaded is not None:
             st.stop()
 
         results_df = pd.DataFrame(results)
+
+        average_row = pd.DataFrame([{
+
+            "Cycle": "Average",
+
+            "T63 Response (s)":
+                round(
+                    results_df[
+                        "T63 Response (s)"
+                    ].mean(),
+                    2
+                ),
+
+            "T90 Response (s)":
+                round(
+                    results_df[
+                        "T90 Response (s)"
+                    ].mean(),
+                    2
+                ),
+
+            "T37 Recovery (s)":
+                round(
+                    results_df[
+                        "T37 Recovery (s)"
+                    ].mean(),
+                    2
+                ),
+
+            "T10 Recovery (s)":
+                round(
+                    results_df[
+                        "T10 Recovery (s)"
+                    ].mean(),
+                    2
+                )
+        }])
+
+        results_df = pd.concat(
+            [
+                results_df,
+                average_row
+            ],
+            ignore_index=True
+        )
 
         st.subheader(
             "Cycle Results"
@@ -417,14 +425,12 @@ if uploaded is not None:
         fig = go.Figure()
 
         fig.add_trace(
-
             go.Scatter(
                 x=time,
                 y=signal,
                 mode="lines",
                 name="Signal"
             )
-
         )
 
         for start, end in cycles:
@@ -433,12 +439,12 @@ if uploaded is not None:
                 x0=time[start],
                 x1=time[end],
                 fillcolor="green",
-                opacity=0.20,
+                opacity=0.15,
                 line_width=0
             )
 
         fig.update_layout(
-            title="Detected Cycles",
+            title="Sensor Response",
             xaxis_title="Time (s)",
             yaxis_title="Signal"
         )
@@ -462,7 +468,7 @@ if uploaded is not None:
             )
 
         st.download_button(
-            "Download Analysis",
+            label="Download Analysis",
             data=buffer.getvalue(),
             file_name="sensor_response_analysis.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
