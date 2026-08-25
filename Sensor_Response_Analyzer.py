@@ -5,14 +5,6 @@ import plotly.graph_objects as go
 from io import BytesIO
 
 # =====================================================
-# SETTINGS
-# =====================================================
-
-FIRST_GAS_ON = 234
-GAS_DURATION = 1080
-AIR_DURATION = 1080
-
-# =====================================================
 # PAGE
 # =====================================================
 
@@ -24,7 +16,7 @@ st.set_page_config(
 st.title("Gas Sensor Response Analyzer")
 
 uploaded = st.file_uploader(
-    "Upload Excel or CSV file",
+    "Upload Excel or CSV File",
     type=["xlsx", "csv"]
 )
 
@@ -36,19 +28,19 @@ def prepare_time(df):
 
     try:
 
-        time_col = pd.to_numeric(
+        t = pd.to_numeric(
             df["time"],
             errors="coerce"
         )
 
-        if time_col.notna().all():
+        if t.notna().all():
 
             return (
-                (time_col - time_col.iloc[0])
+                (t - t.iloc[0])
                 * 86400
             ).to_numpy()
 
-    except:
+    except Exception:
         pass
 
     return np.arange(len(df))
@@ -63,7 +55,7 @@ def smooth_signal(signal):
     return (
         pd.Series(signal)
         .rolling(
-            window=21,
+            window=11,
             center=True
         )
         .mean()
@@ -125,62 +117,123 @@ def interpolate_crossing(
 
 
 # =====================================================
-# TIMING-BASED CYCLES
+# EVENT HELPERS
 # =====================================================
 
-def detect_cycles_from_timing(time):
+def merge_events(events, gap=20):
 
-    period = (
-        GAS_DURATION
-        + AIR_DURATION
+    merged = []
+
+    for e in events:
+
+        if (
+            len(merged) == 0
+            or e - merged[-1] > gap
+        ):
+
+            merged.append(int(e))
+
+    return merged
+
+
+def refine_on(smoothed, idx):
+
+    grad = np.gradient(smoothed)
+
+    threshold = (
+        0.05 * np.max(grad)
     )
+
+    while (
+        idx > 0
+        and grad[idx] > threshold
+    ):
+        idx -= 1
+
+    return idx
+
+
+def refine_off(smoothed, idx):
+
+    grad = np.gradient(smoothed)
+
+    threshold = (
+        0.05 *
+        abs(np.min(grad))
+    )
+
+    while (
+        idx > 0
+        and abs(grad[idx]) > threshold
+    ):
+        idx -= 1
+
+    return idx
+
+
+# =====================================================
+# DETECT CYCLES
+# =====================================================
+
+def detect_cycles(signal):
+
+    smoothed = smooth_signal(signal)
+
+    grad = np.gradient(smoothed)
+
+    grad_std = np.std(grad)
+
+    rise_candidates = np.where(
+        grad > 3 * grad_std
+    )[0]
+
+    fall_candidates = np.where(
+        grad < -3 * grad_std
+    )[0]
+
+    rises = merge_events(
+        rise_candidates,
+        gap=20
+    )
+
+    falls = merge_events(
+        fall_candidates,
+        gap=20
+    )
+
+    rises = [
+        refine_on(smoothed, r)
+        for r in rises
+    ]
+
+    falls = [
+        refine_off(smoothed, f)
+        for f in falls
+    ]
 
     cycles = []
 
-    cycle_no = 1
+    fall_idx = 0
 
-    gas_start = FIRST_GAS_ON
+    for rise in rises:
 
-    while True:
+        while (
+            fall_idx < len(falls)
+            and falls[fall_idx] < rise
+        ):
+            fall_idx += 1
 
-        gas_end = (
-            gas_start
-            + GAS_DURATION
-        )
-
-        next_gas_start = (
-            gas_start
-            + period
-        )
-
-        if gas_end > time[-1]:
-
+        if fall_idx >= len(falls):
             break
-
-        start_idx = np.argmin(
-            np.abs(time - gas_start)
-        )
-
-        end_idx = np.argmin(
-            np.abs(time - gas_end)
-        )
-
-        next_idx = np.argmin(
-            np.abs(time - next_gas_start)
-        )
 
         cycles.append(
             (
-                cycle_no,
-                start_idx,
-                end_idx,
-                next_idx
+                rise,
+                falls[fall_idx]
             )
         )
 
-        cycle_no += 1
-
-        gas_start += period
+        fall_idx += 1
 
     return cycles
 
@@ -203,8 +256,8 @@ def analyse_cycle(
     baseline = np.median(
 
         smoothed[
-            max(0, start - 120):
-            max(start - 20, 1)
+            max(0, start - 40):
+            max(start - 5, 1)
         ]
 
     )
@@ -213,9 +266,9 @@ def analyse_cycle(
 
         smoothed[
             start + int(
-                0.70 * (end - start)
+                0.75 * (end - start)
             ):
-            end - 10
+            max(end - 5, start + 1)
         ]
 
     )
@@ -223,12 +276,9 @@ def analyse_cycle(
     delta = plateau - baseline
 
     if abs(delta) < 0.05:
-
         return None
 
-    # ------------------------
     # RESPONSE
-    # ------------------------
 
     level63 = (
         baseline
@@ -252,36 +302,17 @@ def analyse_cycle(
         response_signal,
         response_time,
         level63,
-        rising=True
+        True
     )
 
     t90_cross = interpolate_crossing(
         response_signal,
         response_time,
         level90,
-        rising=True
+        True
     )
 
-    t63 = np.nan
-    t90 = np.nan
-
-    if not np.isnan(t63_cross):
-
-        t63 = (
-            t63_cross
-            - time[start]
-        )
-
-    if not np.isnan(t90_cross):
-
-        t90 = (
-            t90_cross
-            - time[start]
-        )
-
-    # ------------------------
     # RECOVERY
-    # ------------------------
 
     level37 = (
         baseline
@@ -305,60 +336,55 @@ def analyse_cycle(
         recovery_signal,
         recovery_time,
         level37,
-        rising=False
+        False
     )
 
     t10_cross = interpolate_crossing(
         recovery_signal,
         recovery_time,
         level10,
-        rising=False
+        False
     )
 
-    t37 = np.nan
-    t10 = np.nan
+    t63 = (
+        t63_cross - time[start]
+    ) if not np.isnan(t63_cross) else np.nan
 
-    if not np.isnan(t37_cross):
+    t90 = (
+        t90_cross - time[start]
+    ) if not np.isnan(t90_cross) else np.nan
 
-        t37 = (
-            t37_cross
-            - time[end]
-        )
+    t37 = (
+        t37_cross - time[end]
+    ) if not np.isnan(t37_cross) else np.nan
 
-    if not np.isnan(t10_cross):
-
-        t10 = (
-            t10_cross
-            - time[end]
-        )
+    t10 = (
+        t10_cross - time[end]
+    ) if not np.isnan(t10_cross) else np.nan
 
     return {
 
         "Cycle": cycle_no,
 
-        "T63 Response (s)": (
+        "T63 Response (s)":
             round(float(t63), 2)
             if not np.isnan(t63)
-            else np.nan
-        ),
+            else np.nan,
 
-        "T90 Response (s)": (
+        "T90 Response (s)":
             round(float(t90), 2)
             if not np.isnan(t90)
-            else np.nan
-        ),
+            else np.nan,
 
-        "T37 Recovery (s)": (
+        "T37 Recovery (s)":
             round(float(t37), 2)
             if not np.isnan(t37)
-            else np.nan
-        ),
+            else np.nan,
 
-        "T10 Recovery (s)": (
+        "T10 Recovery (s)":
             round(float(t10), 2)
             if not np.isnan(t10)
             else np.nan
-        )
     }
 
 
@@ -383,13 +409,6 @@ if uploaded is not None:
             for c in df.columns
         ]
 
-        if "signal" not in df.columns:
-
-            st.error(
-                "Column 'signal' not found."
-            )
-            st.stop()
-
         signal = pd.to_numeric(
             df["signal"],
             errors="coerce"
@@ -397,45 +416,38 @@ if uploaded is not None:
 
         mask = signal.notna()
 
-        signal = signal[mask].to_numpy()
+        signal = signal[
+            mask
+        ].to_numpy()
 
         df = df.loc[mask]
 
         time = prepare_time(df)
 
-        cycles = detect_cycles_from_timing(
-            time
-        )
+        cycles = detect_cycles(signal)
 
         results = []
 
-        for (
-            cycle_no,
-            start,
-            end,
-            next_start
-        ) in cycles:
+        for i in range(
+            len(cycles) - 1
+        ):
 
-            result = analyse_cycle(
+            start, end = cycles[i]
+
+            next_start = cycles[i + 1][0]
+
+            row = analyse_cycle(
                 signal,
                 time,
                 start,
                 end,
                 next_start,
-                cycle_no
+                i + 1
             )
 
-            if result is not None:
+            if row is not None:
 
-                results.append(result)
-
-        if len(results) == 0:
-
-            st.error(
-                "No valid cycles found."
-            )
-
-            st.stop()
+                results.append(row)
 
         results_df = pd.DataFrame(results)
 
@@ -445,28 +457,22 @@ if uploaded is not None:
 
         }
 
-        for column in results_df.columns[1:]:
+        for col in results_df.columns[1:]:
 
-            avg_row[column] = round(
-
+            avg_row[col] = round(
                 pd.to_numeric(
-                    results_df[column],
+                    results_df[col],
                     errors="coerce"
                 ).mean(),
-
                 2
-
             )
 
         results_df = pd.concat(
-
             [
                 results_df,
                 pd.DataFrame([avg_row])
             ],
-
             ignore_index=True
-
         )
 
         st.subheader(
@@ -479,40 +485,49 @@ if uploaded is not None:
             use_container_width=True
         )
 
-        # ==================================
         # PLOT
-        # ==================================
 
         fig = go.Figure()
 
         fig.add_trace(
-
             go.Scatter(
                 x=time,
                 y=signal,
-                mode="lines",
-                name="Signal"
+                name="Signal",
+                mode="lines"
             )
-
         )
 
-        for (
-            cycle_no,
-            start,
-            end,
-            next_start
-        ) in cycles:
+        for start, end in cycles:
 
-            fig.add_vrect(
-                x0=time[start],
-                x1=time[end],
-                fillcolor="green",
-                opacity=0.15,
-                line_width=0
+            fig.add_trace(
+                go.Scatter(
+                    x=[time[start]],
+                    y=[signal[start]],
+                    mode="markers",
+                    marker=dict(
+                        color="green",
+                        size=10
+                    ),
+                    name="Gas ON"
+                )
+            )
+
+            fig.add_trace(
+                go.Scatter(
+                    x=[time[end]],
+                    y=[signal[end]],
+                    mode="markers",
+                    marker=dict(
+                        color="red",
+                        size=10
+                    ),
+                    name="Gas OFF"
+                )
             )
 
         fig.update_layout(
-            title="Sensor Signal",
+            title="Detected Gas ON/OFF Events",
             xaxis_title="Time (s)",
             yaxis_title="Signal"
         )
@@ -522,14 +537,12 @@ if uploaded is not None:
             use_container_width=True
         )
 
-        # ==================================
         # EXPORT
-        # ==================================
 
-        buffer = BytesIO()
+        output = BytesIO()
 
         with pd.ExcelWriter(
-            buffer,
+            output,
             engine="openpyxl"
         ) as writer:
 
@@ -541,7 +554,7 @@ if uploaded is not None:
 
         st.download_button(
             "Download Analysis",
-            data=buffer.getvalue(),
+            output.getvalue(),
             file_name="sensor_response_analysis.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
@@ -557,4 +570,3 @@ else:
     st.info(
         "Upload a file to begin analysis."
     )
-    
