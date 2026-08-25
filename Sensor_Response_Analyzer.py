@@ -2,9 +2,15 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from scipy.signal import savgol_filter, find_peaks
 from io import BytesIO
 
+# =====================================================
+# SETTINGS
+# =====================================================
+
+FIRST_GAS_ON = 234
+GAS_DURATION = 1080
+AIR_DURATION = 1080
 
 # =====================================================
 # PAGE
@@ -18,10 +24,9 @@ st.set_page_config(
 st.title("Gas Sensor Response Analyzer")
 
 uploaded = st.file_uploader(
-    "Upload Excel or CSV File",
+    "Upload Excel or CSV file",
     type=["xlsx", "csv"]
 )
-
 
 # =====================================================
 # TIME
@@ -31,19 +36,19 @@ def prepare_time(df):
 
     try:
 
-        t = pd.to_numeric(
+        time_col = pd.to_numeric(
             df["time"],
             errors="coerce"
         )
 
-        if t.notna().all():
+        if time_col.notna().all():
 
             return (
-                (t - t.iloc[0])
+                (time_col - time_col.iloc[0])
                 * 86400
             ).to_numpy()
 
-    except Exception:
+    except:
         pass
 
     return np.arange(len(df))
@@ -55,20 +60,16 @@ def prepare_time(df):
 
 def smooth_signal(signal):
 
-    n = len(signal)
-
-    window = min(31, n - 1)
-
-    if window % 2 == 0:
-        window -= 1
-
-    if window < 7:
-        return signal
-
-    return savgol_filter(
-        signal,
-        window_length=window,
-        polyorder=3
+    return (
+        pd.Series(signal)
+        .rolling(
+            window=21,
+            center=True
+        )
+        .mean()
+        .bfill()
+        .ffill()
+        .to_numpy()
     )
 
 
@@ -101,13 +102,13 @@ def interpolate_crossing(
 
         if crossed:
 
-            y1 = signal[i - 1]
-            y2 = signal[i]
-
             t1 = time[i - 1]
             t2 = time[i]
 
-            if y2 == y1:
+            y1 = signal[i - 1]
+            y2 = signal[i]
+
+            if y1 == y2:
                 return t1
 
             frac = (
@@ -124,55 +125,62 @@ def interpolate_crossing(
 
 
 # =====================================================
-# CYCLE DETECTION
+# TIMING-BASED CYCLES
 # =====================================================
 
-def detect_cycles(signal):
+def detect_cycles_from_timing(time):
 
-    smoothed = smooth_signal(signal)
-
-    gradient = np.gradient(smoothed)
-
-    threshold = (
-        2.5 *
-        np.std(gradient)
-    )
-
-    rise_peaks, _ = find_peaks(
-        gradient,
-        height=threshold,
-        distance=100
-    )
-
-    fall_peaks, _ = find_peaks(
-        -gradient,
-        height=threshold,
-        distance=100
+    period = (
+        GAS_DURATION
+        + AIR_DURATION
     )
 
     cycles = []
 
-    f_idx = 0
+    cycle_no = 1
 
-    for rise in rise_peaks:
+    gas_start = FIRST_GAS_ON
 
-        while (
-            f_idx < len(fall_peaks)
-            and fall_peaks[f_idx] < rise
-        ):
-            f_idx += 1
+    while True:
 
-        if f_idx >= len(fall_peaks):
+        gas_end = (
+            gas_start
+            + GAS_DURATION
+        )
+
+        next_gas_start = (
+            gas_start
+            + period
+        )
+
+        if gas_end > time[-1]:
+
             break
+
+        start_idx = np.argmin(
+            np.abs(time - gas_start)
+        )
+
+        end_idx = np.argmin(
+            np.abs(time - gas_end)
+        )
+
+        next_idx = np.argmin(
+            np.abs(time - next_gas_start)
+        )
 
         cycles.append(
             (
-                int(rise),
-                int(fall_peaks[f_idx])
+                cycle_no,
+                start_idx,
+                end_idx,
+                next_idx
             )
         )
 
-        f_idx += 1
+        cycle_no += 1
+
+        gas_start += period
 
     return cycles
 
@@ -195,7 +203,7 @@ def analyse_cycle(
     baseline = np.median(
 
         smoothed[
-            max(0, start - 80):
+            max(0, start - 120):
             max(start - 20, 1)
         ]
 
@@ -205,21 +213,22 @@ def analyse_cycle(
 
         smoothed[
             start + int(
-                0.7 * (end - start)
+                0.70 * (end - start)
             ):
-            max(end - 10, start + 1)
+            end - 10
         ]
 
     )
 
     delta = plateau - baseline
 
-    if delta <= 0:
+    if abs(delta) < 0.05:
+
         return None
 
-    # --------------------------
-    # RESPONSE LEVELS
-    # --------------------------
+    # ------------------------
+    # RESPONSE
+    # ------------------------
 
     level63 = (
         baseline
@@ -270,9 +279,9 @@ def analyse_cycle(
             - time[start]
         )
 
-    # --------------------------
-    # RECOVERY LEVELS
-    # --------------------------
+    # ------------------------
+    # RECOVERY
+    # ------------------------
 
     level37 = (
         baseline
@@ -327,25 +336,29 @@ def analyse_cycle(
 
         "Cycle": cycle_no,
 
-        "T63 Response (s)":
-            round(t63, 2)
+        "T63 Response (s)": (
+            round(float(t63), 2)
             if not np.isnan(t63)
-            else np.nan,
+            else np.nan
+        ),
 
-        "T90 Response (s)":
-            round(t90, 2)
+        "T90 Response (s)": (
+            round(float(t90), 2)
             if not np.isnan(t90)
-            else np.nan,
+            else np.nan
+        ),
 
-        "T37 Recovery (s)":
-            round(t37, 2)
+        "T37 Recovery (s)": (
+            round(float(t37), 2)
             if not np.isnan(t37)
-            else np.nan,
+            else np.nan
+        ),
 
-        "T10 Recovery (s)":
-            round(t10, 2)
+        "T10 Recovery (s)": (
+            round(float(t10), 2)
             if not np.isnan(t10)
             else np.nan
+        )
     }
 
 
@@ -375,7 +388,6 @@ if uploaded is not None:
             st.error(
                 "Column 'signal' not found."
             )
-
             st.stop()
 
         signal = pd.to_numeric(
@@ -385,61 +397,60 @@ if uploaded is not None:
 
         mask = signal.notna()
 
-        signal = signal[
-            mask
-        ].to_numpy()
+        signal = signal[mask].to_numpy()
 
         df = df.loc[mask]
 
         time = prepare_time(df)
 
-        cycles = detect_cycles(signal)
+        cycles = detect_cycles_from_timing(
+            time
+        )
 
         results = []
 
-        for i in range(
-            len(cycles) - 1
-        ):
+        for (
+            cycle_no,
+            start,
+            end,
+            next_start
+        ) in cycles:
 
-            start, end = cycles[i]
-
-            next_start = cycles[i + 1][0]
-
-            row = analyse_cycle(
+            result = analyse_cycle(
                 signal,
                 time,
                 start,
                 end,
                 next_start,
-                i + 1
+                cycle_no
             )
 
-            if row is not None:
+            if result is not None:
 
-                results.append(row)
+                results.append(result)
 
         if len(results) == 0:
 
             st.error(
-                "No valid cycles detected."
+                "No valid cycles found."
             )
 
             st.stop()
 
         results_df = pd.DataFrame(results)
 
-        avg = {
+        avg_row = {
 
             "Cycle": "Average"
 
         }
 
-        for col in results_df.columns[1:]:
+        for column in results_df.columns[1:]:
 
-            avg[col] = round(
+            avg_row[column] = round(
 
                 pd.to_numeric(
-                    results_df[col],
+                    results_df[column],
                     errors="coerce"
                 ).mean(),
 
@@ -451,14 +462,15 @@ if uploaded is not None:
 
             [
                 results_df,
-                pd.DataFrame([avg])
+                pd.DataFrame([avg_row])
             ],
 
             ignore_index=True
+
         )
 
         st.subheader(
-            "Results"
+            "Cycle Results"
         )
 
         st.dataframe(
@@ -467,9 +479,9 @@ if uploaded is not None:
             use_container_width=True
         )
 
-        # --------------------------
-        # Plot
-        # --------------------------
+        # ==================================
+        # PLOT
+        # ==================================
 
         fig = go.Figure()
 
@@ -484,7 +496,12 @@ if uploaded is not None:
 
         )
 
-        for start, end in cycles:
+        for (
+            cycle_no,
+            start,
+            end,
+            next_start
+        ) in cycles:
 
             fig.add_vrect(
                 x0=time[start],
@@ -505,14 +522,14 @@ if uploaded is not None:
             use_container_width=True
         )
 
-        # --------------------------
-        # Export
-        # --------------------------
+        # ==================================
+        # EXPORT
+        # ==================================
 
-        output = BytesIO()
+        buffer = BytesIO()
 
         with pd.ExcelWriter(
-            output,
+            buffer,
             engine="openpyxl"
         ) as writer:
 
@@ -524,7 +541,7 @@ if uploaded is not None:
 
         st.download_button(
             "Download Analysis",
-            output.getvalue(),
+            data=buffer.getvalue(),
             file_name="sensor_response_analysis.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
@@ -532,7 +549,7 @@ if uploaded is not None:
     except Exception as e:
 
         st.error(
-            f"Error: {e}"
+            f"Error: {str(e)}"
         )
 
 else:
@@ -540,3 +557,4 @@ else:
     st.info(
         "Upload a file to begin analysis."
     )
+    
