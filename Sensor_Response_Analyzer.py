@@ -45,7 +45,7 @@ def smooth_signal(signal):
     return (
         pd.Series(signal)
         .rolling(
-            window=9,
+            window=11,
             center=True,
             min_periods=1
         )
@@ -173,8 +173,8 @@ def detect_cycles(
             - time[rise]
         )
 
-        # expected ON time
-        # approximately 1080 s
+        # 18 min gas exposure
+        # expected ~1080 s
 
         if (
             800 <= duration <= 1400
@@ -454,15 +454,11 @@ if uploaded is not None:
 
         if uploaded.name.endswith(".csv"):
 
-            df = pd.read_csv(
-                uploaded
-            )
+            df = pd.read_csv(uploaded)
 
         else:
 
-            df = pd.read_excel(
-                uploaded
-            )
+            df = pd.read_excel(uploaded)
 
         df.columns = [
             str(c).lower().strip()
@@ -474,13 +470,21 @@ if uploaded is not None:
             errors="coerce"
         )
 
-        mask = signal.notna()
+        time_raw = pd.to_numeric(
+            df["time"],
+            errors="coerce"
+        )
 
-        signal = signal[
-            mask
+        mask = (
+            signal.notna()
+            & time_raw.notna()
+        )
+
+        df = df.loc[mask].copy()
+
+        signal = df[
+            "signal"
         ].to_numpy()
-
-        df = df.loc[mask]
 
         time = prepare_time(
             df
@@ -500,35 +504,48 @@ if uploaded is not None:
         )
 
         st.write(
-            f"Sample interval: {np.median(np.diff(time)):.1f} s"
+            f"Sample interval: "
+            f"{np.median(np.diff(time)):.1f} s"
         )
 
         st.write(
-            f"Total duration: {time[-1]/60:.1f} min"
+            f"Total duration: "
+            f"{time[-1]/60:.1f} min"
         )
 
         # =====================================
         # CYCLE TABLE
         # =====================================
 
+        st.subheader(
+            "Detected Cycles"
+        )
+
         cycle_table = pd.DataFrame(
             [
                 {
                     "Cycle": i + 1,
                     "Start Time (s)": round(
-                        time[start],
+                        float(
+                            time[start]
+                        ),
                         1
                     ),
                     "End Time (s)": round(
-                        time[end],
+                        float(
+                            time[end]
+                        ),
                         1
                     ),
                     "Duration (s)": round(
-                        time[end]
-                        - time[start],
+                        float(
+                            time[end]
+                            - time[start]
+                        ),
                         1
                     )
                 }
+
                 for i, (
                     start,
                     end
@@ -536,10 +553,6 @@ if uploaded is not None:
                     cycles
                 )
             ]
-        )
-
-        st.subheader(
-            "Detected Cycles"
         )
 
         st.dataframe(
@@ -693,7 +706,7 @@ if uploaded is not None:
             )
 
         # =====================================
-        # INDIVIDUAL CYCLE DIAGNOSTICS
+        # INDIVIDUAL CYCLES
         # =====================================
 
         st.subheader(
@@ -709,12 +722,12 @@ if uploaded is not None:
 
             left = max(
                 0,
-                start - 10
+                start - 20
             )
 
             right = min(
                 len(signal),
-                end + 10
+                end + 20
             )
 
             fig_cycle = go.Figure()
@@ -742,9 +755,9 @@ if uploaded is not None:
 
             fig_cycle.update_layout(
                 title=f"Cycle {i+1}",
+                height=400,
                 xaxis_title="Time (s)",
-                yaxis_title="Signal",
-                height=400
+                yaxis_title="Signal"
             )
 
             st.plotly_chart(
