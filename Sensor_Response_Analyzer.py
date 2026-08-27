@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from io import BytesIO
-from scipy.signal import find_peaks
 
 # =====================================================
 # PAGE
@@ -109,9 +108,7 @@ def interpolate_crossing(
 
             return (
                 t1
-                + frac * (
-                    t2 - t1
-                )
+                + frac * (t2 - t1)
             )
 
     return np.nan
@@ -126,42 +123,53 @@ def detect_cycles(signal):
 
     grad = np.gradient(smoothed)
 
-    prominence = np.std(grad)
-
-    rise_peaks, _ = find_peaks(
-        grad,
-        prominence=prominence,
-        distance=100
+    threshold = (
+        0.15
+        * np.max(
+            np.abs(grad)
+        )
     )
 
-    fall_peaks, _ = find_peaks(
-        -grad,
-        prominence=prominence,
-        distance=100
-    )
+    events = np.where(
+        np.abs(grad) > threshold
+    )[0]
+
+    if len(events) == 0:
+
+        return []
+
+    merged = [events[0]]
+
+    for e in events[1:]:
+
+        if (
+            e - merged[-1]
+        ) > 20:
+
+            merged.append(e)
 
     cycles = []
 
-    j = 0
+    i = 0
 
-    for rise in rise_peaks:
+    while i < len(merged) - 1:
 
-        while (
-            j < len(fall_peaks)
-            and fall_peaks[j] < rise
+        start = merged[i]
+        end = merged[i + 1]
+
+        if (
+            grad[start] > 0
+            and grad[end] < 0
         ):
-            j += 1
-
-        if j < len(fall_peaks):
 
             cycles.append(
                 (
-                    int(rise),
-                    int(fall_peaks[j])
+                    int(start),
+                    int(end)
                 )
             )
 
-            j += 1
+        i += 2
 
     return cycles
     # =====================================================
@@ -192,25 +200,23 @@ def analyse_cycle(
 
         smoothed[
             start + int(
-                0.4 * (end - start)
+                0.30 * (end - start)
             ):
             start + int(
-                0.8 * (end - start)
+                0.70 * (end - start)
             )
         ]
 
     )
 
-    delta = (
-        plateau - baseline
-    )
+    delta = plateau - baseline
 
     if abs(delta) < 0.05:
 
         return None
 
     # =====================================
-    # RESPONSE
+    # RESPONSE LEVELS
     # =====================================
 
     level63 = (
@@ -246,7 +252,7 @@ def analyse_cycle(
     )
 
     # =====================================
-    # RECOVERY
+    # RECOVERY LEVELS
     # =====================================
 
     level37 = (
@@ -305,7 +311,7 @@ def analyse_cycle(
         t10_cross
     ) else np.nan
 
-    response_span = (
+    exposure_time = (
         time[end] - time[start]
     )
 
@@ -316,7 +322,7 @@ def analyse_cycle(
 
         "Exposure Time (s)":
             round(
-                float(response_span),
+                float(exposure_time),
                 2
             ),
 
@@ -380,11 +386,15 @@ if uploaded is not None:
 
         if uploaded.name.endswith(".csv"):
 
-            df = pd.read_csv(uploaded)
+            df = pd.read_csv(
+                uploaded
+            )
 
         else:
 
-            df = pd.read_excel(uploaded)
+            df = pd.read_excel(
+                uploaded
+            )
 
         df.columns = [
             str(c).lower().strip()
@@ -398,23 +408,29 @@ if uploaded is not None:
 
         mask = signal.notna()
 
-        signal = signal[mask].to_numpy()
+        signal = signal[
+            mask
+        ].to_numpy()
 
         df = df.loc[mask]
 
         time = prepare_time(df)
 
-        smoothed = smooth_signal(signal)
+        smoothed = smooth_signal(
+            signal
+        )
 
-        cycles = detect_cycles(signal)
+        cycles = detect_cycles(
+            signal
+        )
 
         st.success(
             f"Detected {len(cycles)} cycles"
         )
 
-        # =================================================
+        # ==========================================
         # CYCLE TABLE
-        # =================================================
+        # ==========================================
 
         st.subheader(
             "Detected Cycles"
@@ -426,6 +442,7 @@ if uploaded is not None:
                     "Cycle": i + 1,
                     "Start Index": start,
                     "End Index": end,
+                    "Duration (points)": end - start,
                     "Start Time (s)": round(
                         time[start],
                         2
@@ -445,9 +462,9 @@ if uploaded is not None:
             use_container_width=True
         )
 
-        # =================================================
+        # ==========================================
         # OVERVIEW PLOT
-        # =================================================
+        # ==========================================
 
         st.subheader(
             "Cycle Detection Overview"
@@ -462,7 +479,7 @@ if uploaded is not None:
                 mode="lines",
                 name="Raw Signal",
                 line=dict(
-                    color="lightgrey"
+                    color="lightgray"
                 )
             )
         )
@@ -482,6 +499,14 @@ if uploaded is not None:
 
         for i, (start, end) in enumerate(cycles):
 
+            fig.add_vrect(
+                x0=time[start],
+                x1=time[end],
+                fillcolor="green",
+                opacity=0.08,
+                line_width=0
+            )
+
             fig.add_trace(
                 go.Scatter(
                     x=[time[start]],
@@ -491,7 +516,7 @@ if uploaded is not None:
                     textposition="top center",
                     marker=dict(
                         color="green",
-                        size=11,
+                        size=12,
                         symbol="triangle-up"
                     ),
                     showlegend=False
@@ -507,19 +532,11 @@ if uploaded is not None:
                     textposition="bottom center",
                     marker=dict(
                         color="red",
-                        size=11,
+                        size=12,
                         symbol="triangle-down"
                     ),
                     showlegend=False
                 )
-            )
-
-            fig.add_vrect(
-                x0=time[start],
-                x1=time[end],
-                fillcolor="green",
-                opacity=0.08,
-                line_width=0
             )
 
         fig.update_layout(
@@ -534,9 +551,49 @@ if uploaded is not None:
             use_container_width=True
         )
 
-        # =================================================
+        # ==========================================
+        # GRADIENT DIAGNOSTIC
+        # ==========================================
+
+        st.subheader(
+            "Gradient Diagnostic"
+        )
+
+        grad = np.gradient(
+            smoothed
+        )
+
+        fig_grad = go.Figure()
+
+        fig_grad.add_trace(
+            go.Scatter(
+                x=time,
+                y=grad,
+                mode="lines",
+                name="Gradient"
+            )
+        )
+
+        fig_grad.add_hline(
+            y=0,
+            line_dash="dash"
+        )
+
+        fig_grad.update_layout(
+            title="Gradient vs Time",
+            xaxis_title="Time (s)",
+            yaxis_title="Gradient",
+            height=450
+        )
+
+        st.plotly_chart(
+            fig_grad,
+            use_container_width=True
+        )
+
+        # ==========================================
         # CALCULATIONS
-        # =================================================
+        # ==========================================
 
         results = []
 
@@ -561,7 +618,9 @@ if uploaded is not None:
 
             if row is not None:
 
-                results.append(row)
+                results.append(
+                    row
+                )
 
         results_df = pd.DataFrame(
             results
@@ -603,12 +662,12 @@ if uploaded is not None:
                 hide_index=True
             )
 
-        # =================================================
+        # ==========================================
         # INDIVIDUAL CYCLE PLOTS
-        # =================================================
+        # ==========================================
 
         st.subheader(
-            "Individual Cycles"
+            "Individual Cycle Diagnostics"
         )
 
         for i, (start, end) in enumerate(cycles):
@@ -660,9 +719,9 @@ if uploaded is not None:
                 use_container_width=True
             )
 
-        # =================================================
+        # ==========================================
         # NORMALIZED RESPONSE
-        # =================================================
+        # ==========================================
 
         st.subheader(
             "Normalized Response Per Cycle"
@@ -680,18 +739,24 @@ if uploaded is not None:
 
             baseline = np.median(
                 smoothed[
-                    max(0, start - 50):
-                    max(start - 10, 1)
+                    max(
+                        0,
+                        start - 50
+                    ):
+                    max(
+                        start - 10,
+                        1
+                    )
                 ]
             )
 
             plateau = np.median(
                 smoothed[
                     start + int(
-                        0.4 * (end - start)
+                        0.30 * (end - start)
                     ):
                     start + int(
-                        0.8 * (end - start)
+                        0.70 * (end - start)
                     )
                 ]
             )
@@ -739,9 +804,9 @@ if uploaded is not None:
                 use_container_width=True
             )
 
-        # =================================================
+        # ==========================================
         # EXPORT
-        # =================================================
+        # ==========================================
 
         if not results_df.empty:
 
