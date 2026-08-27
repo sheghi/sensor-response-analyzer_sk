@@ -26,17 +26,19 @@ uploaded = st.file_uploader(
 
 def prepare_time(df):
 
-    t = pd.to_numeric(
+    t = pd.to_datetime(
         df["time"],
         errors="coerce"
-    ).to_numpy()
+    )
 
-    diffs = np.diff(t)
+    if t.isna().all():
+        raise ValueError(
+            "Could not interpret time column."
+        )
 
-    if len(diffs) > 0 and np.nanmedian(diffs) > 1:
-        return t - t[0]
-
-    return (t - t[0]) * 86400
+    return (
+        t - t.iloc[0]
+    ).dt.total_seconds().to_numpy()
 
 # =====================================================
 # SMOOTHING
@@ -100,8 +102,7 @@ def interpolate_crossing(
             )
 
             return (
-                x1
-                + frac * (x2 - x1)
+                x1 + frac * (x2 - x1)
             )
 
     return np.nan
@@ -128,9 +129,7 @@ def detect_cycles(signal, time):
         low_level + high_level
     ) / 2
 
-    gas_on = (
-        smoothed > threshold
-    )
+    gas_on = smoothed > threshold
 
     changes = np.diff(
         gas_on.astype(int)
@@ -179,7 +178,7 @@ def detect_cycles(signal, time):
 
     return cycles, threshold
     # =====================================================
-# ANALYSIS
+# ANALYSE CYCLE
 # =====================================================
 
 def analyse_cycle(
@@ -228,41 +227,11 @@ def analyse_cycle(
     if abs(response_size) < 0.01:
         return None
 
-    level63 = (
-        baseline
-        + 0.63 * response_size
-    )
+    level63 = baseline + 0.63 * response_size
+    level90 = baseline + 0.90 * response_size
 
-    level90 = (
-        baseline
-        + 0.90 * response_size
-    )
-
-    response_signal = smoothed[
-        start:end
-    ]
-
-    response_time = time[
-        start:end
-    ]
-
-    level37 = (
-        baseline
-        + 0.37 * response_size
-    )
-
-    level10 = (
-        baseline
-        + 0.10 * response_size
-    )
-
-    recovery_signal = smoothed[
-        end:next_start
-    ]
-
-    recovery_time = time[
-        end:next_start
-    ]
+    response_signal = smoothed[start:end]
+    response_time = time[start:end]
 
     t63_cross = interpolate_crossing(
         response_signal,
@@ -277,6 +246,12 @@ def analyse_cycle(
         level90,
         True
     )
+
+    level37 = baseline + 0.37 * response_size
+    level10 = baseline + 0.10 * response_size
+
+    recovery_signal = smoothed[end:next_start]
+    recovery_time = time[end:next_start]
 
     t37_cross = interpolate_crossing(
         recovery_signal,
@@ -321,16 +296,10 @@ def analyse_cycle(
         "Cycle": cycle_no,
 
         "Exposure Time (s)":
-        round(
-            time[end] - time[start],
-            1
-        ),
+        round(time[end] - time[start], 1),
 
         "Recovery Window (s)":
-        round(
-            time[next_start] - time[end],
-            1
-        ),
+        round(time[next_start] - time[end], 1),
 
         "Baseline":
         round(baseline, 4),
@@ -363,8 +332,11 @@ if uploaded is not None:
     try:
 
         if uploaded.name.endswith(".csv"):
+
             df = pd.read_csv(uploaded)
+
         else:
+
             df = pd.read_excel(uploaded)
 
         df = df.iloc[:, :2].copy()
@@ -374,7 +346,7 @@ if uploaded is not None:
             "signal"
         ]
 
-        df["time"] = pd.to_numeric(
+        df["time"] = pd.to_datetime(
             df["time"],
             errors="coerce"
         )
@@ -384,11 +356,22 @@ if uploaded is not None:
             errors="coerce"
         )
 
-        df = df.dropna()
+        df = df.dropna(
+            subset=[
+                "time",
+                "signal"
+            ]
+        )
 
-        signal = df[
-            "signal"
-        ].to_numpy()
+        if len(df) < 10:
+
+            st.error(
+                "Insufficient valid data."
+            )
+
+            st.stop()
+
+        signal = df["signal"].to_numpy()
 
         time = prepare_time(df)
 
@@ -401,10 +384,6 @@ if uploaded is not None:
 
         st.success(
             f"Detected {len(cycles)} cycles"
-        )
-
-        st.write(
-            f"Threshold = {threshold:.4f}"
         )
 
         fig = go.Figure()
@@ -457,22 +436,17 @@ if uploaded is not None:
                 len(cycles) - 1
             ):
 
-                start, end = cycles[i]
-
-                next_start = (
-                    cycles[i + 1][0]
-                )
-
                 row = analyse_cycle(
                     signal,
                     time,
-                    start,
-                    end,
-                    next_start,
+                    cycles[i][0],
+                    cycles[i][1],
+                    cycles[i + 1][0],
                     i + 1
                 )
 
                 if row is not None:
+
                     results.append(row)
 
         results_df = pd.DataFrame(
@@ -480,6 +454,10 @@ if uploaded is not None:
         )
 
         if not results_df.empty:
+
+            st.subheader(
+                "Response Metrics"
+            )
 
             st.dataframe(
                 results_df,
@@ -517,3 +495,4 @@ else:
     st.info(
         "Upload a file to begin analysis."
     )
+    
