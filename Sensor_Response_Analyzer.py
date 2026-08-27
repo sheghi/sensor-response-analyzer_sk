@@ -39,7 +39,6 @@ def prepare_time(df):
         t - t[0]
     ) * 86400
 
-
 # =====================================================
 # SMOOTHING
 # =====================================================
@@ -56,7 +55,6 @@ def smooth_signal(signal):
         .mean()
         .to_numpy()
     )
-
 
 # =====================================================
 # INTERPOLATION
@@ -115,7 +113,6 @@ def interpolate_crossing(
 
     return np.nan
 
-
 # =====================================================
 # CYCLE DETECTION
 # =====================================================
@@ -129,26 +126,27 @@ def detect_cycles(
         signal
     )
 
-    low = np.percentile(
+    low_level = np.percentile(
         smoothed,
         10
     )
 
-    high = np.percentile(
+    high_level = np.percentile(
         smoothed,
         90
     )
 
     threshold = (
-        low + high
+        low_level
+        + high_level
     ) / 2
 
-    state = (
+    gas_on = (
         smoothed > threshold
-    ).astype(int)
+    )
 
     changes = np.diff(
-        state
+        gas_on.astype(int)
     )
 
     rises = np.where(
@@ -182,7 +180,8 @@ def detect_cycles(
         )
 
         if (
-            700 <= duration <= 1500
+            duration >= 700
+            and duration <= 1400
         ):
 
             cycles.append(
@@ -212,9 +211,9 @@ def analyse_cycle(
         signal
     )
 
-    # -------------------------------------
+    # =====================================
     # BASELINE
-    # -------------------------------------
+    # =====================================
 
     baseline = np.median(
 
@@ -225,9 +224,9 @@ def analyse_cycle(
 
     )
 
-    # -------------------------------------
+    # =====================================
     # PLATEAU
-    # -------------------------------------
+    # =====================================
 
     plateau_start = (
         start
@@ -256,27 +255,27 @@ def analyse_cycle(
 
     )
 
-    delta = (
+    response_size = (
         plateau
         - baseline
     )
 
-    if abs(delta) < 0.01:
+    if abs(response_size) < 0.01:
 
         return None
 
-    # -------------------------------------
+    # =====================================
     # RESPONSE LEVELS
-    # -------------------------------------
+    # =====================================
 
     level63 = (
         baseline
-        + 0.63 * delta
+        + 0.63 * response_size
     )
 
     level90 = (
         baseline
-        + 0.90 * delta
+        + 0.90 * response_size
     )
 
     response_signal = smoothed[
@@ -301,18 +300,18 @@ def analyse_cycle(
         rising=True
     )
 
-    # -------------------------------------
+    # =====================================
     # RECOVERY LEVELS
-    # -------------------------------------
+    # =====================================
 
     level37 = (
         baseline
-        + 0.37 * delta
+        + 0.37 * response_size
     )
 
     level10 = (
         baseline
-        + 0.10 * delta
+        + 0.10 * response_size
     )
 
     recovery_signal = smoothed[
@@ -337,9 +336,9 @@ def analyse_cycle(
         rising=False
     )
 
-    # -------------------------------------
-    # CALCULATED TIMES
-    # -------------------------------------
+    # =====================================
+    # TIMES
+    # =====================================
 
     t63 = (
         t63_cross
@@ -410,7 +409,7 @@ def analyse_cycle(
 
         "Response Size":
             round(
-                delta,
+                response_size,
                 4
             ),
 
@@ -468,19 +467,11 @@ if uploaded is not None:
         else:
 
             df = pd.read_excel(
-                uploaded
+                uploaded,
+                header=0
             )
 
-        # Force first two columns to be
-        # time and signal
-
-        if len(df.columns) < 2:
-
-            st.error(
-                "File must contain at least 2 columns."
-            )
-
-            st.stop()
+        # Force first two columns
 
         df = df.iloc[:, :2].copy()
 
@@ -490,7 +481,7 @@ if uploaded is not None:
         ]
 
         # =====================================
-        # CLEANING
+        # CLEAN DATA
         # =====================================
 
         df["time"] = pd.to_numeric(
@@ -503,15 +494,24 @@ if uploaded is not None:
             errors="coerce"
         )
 
-        df = df.dropna()
+        df = df.dropna(
+            subset=[
+                "time",
+                "signal"
+            ]
+        )
 
-        if len(df) == 0:
+        if len(df) < 10:
 
             st.error(
-                "No valid rows found."
+                "Insufficient valid data."
             )
 
             st.stop()
+
+        # =====================================
+        # ARRAYS
+        # =====================================
 
         signal = df[
             "signal"
@@ -520,14 +520,6 @@ if uploaded is not None:
         time = prepare_time(
             df
         )
-
-        if len(time) < 2:
-
-            st.error(
-                "Time column invalid."
-            )
-
-            st.stop()
 
         smoothed = smooth_signal(
             signal
@@ -568,67 +560,42 @@ if uploaded is not None:
             "Detected Cycles"
         )
 
-        if len(cycles) > 0:
-
-            cycle_table = pd.DataFrame(
-
-                [
-                    {
-                        "Cycle":
-                            i + 1,
-
-                        "Start Time (s)":
-                            round(
-                                float(
-                                    time[start]
-                                ),
-                                1
-                            ),
-
-                        "End Time (s)":
-                            round(
-                                float(
-                                    time[end]
-                                ),
-                                1
-                            ),
-
-                        "Duration (s)":
-                            round(
-                                float(
-                                    time[end]
-                                    - time[start]
-                                ),
-                                1
-                            )
-                    }
-
-                    for i,
-                    (
-                        start,
-                        end
+        cycle_table = pd.DataFrame(
+            [
+                {
+                    "Cycle": i + 1,
+                    "Start Time (s)": round(
+                        time[start],
+                        1
+                    ),
+                    "End Time (s)": round(
+                        time[end],
+                        1
+                    ),
+                    "Duration (s)": round(
+                        time[end]
+                        - time[start],
+                        1
                     )
+                }
+                for i,
+                (
+                    start,
+                    end
+                )
+                in enumerate(
+                    cycles
+                )
+            ]
+        )
 
-                    in enumerate(
-                        cycles
-                    )
-                ]
-
-            )
-
-            st.dataframe(
-                cycle_table,
-                use_container_width=True
-            )
-
-        else:
-
-            st.warning(
-                "No cycles detected."
-            )
+        st.dataframe(
+            cycle_table,
+            use_container_width=True
+        )
 
         # =====================================
-        # OVERVIEW PLOT
+        # OVERVIEW
         # =====================================
 
         st.subheader(
@@ -638,60 +605,38 @@ if uploaded is not None:
         fig = go.Figure()
 
         fig.add_trace(
-
             go.Scatter(
-
                 x=time,
-
                 y=signal,
-
                 mode="lines",
-
-                name="Signal",
-
+                name="Raw Signal",
                 line=dict(
                     color="lightgrey"
                 )
-
             )
-
         )
 
         fig.add_trace(
-
             go.Scatter(
-
                 x=time,
-
                 y=smoothed,
-
                 mode="lines",
-
-                name="Smoothed",
-
+                name="Smoothed Signal",
                 line=dict(
                     color="blue",
                     width=2
                 )
-
             )
-
         )
 
         for start, end in cycles:
 
             fig.add_vrect(
-
                 x0=time[start],
-
                 x1=time[end],
-
                 fillcolor="green",
-
                 opacity=0.08,
-
                 line_width=0
-
             )
 
             fig.add_vline(
@@ -705,15 +650,10 @@ if uploaded is not None:
             )
 
         fig.update_layout(
-
             height=700,
-
-            title="Detected Cycles",
-
+            title="Detected Gas Exposure Cycles",
             xaxis_title="Time (s)",
-
             yaxis_title="Signal"
-
         )
 
         st.plotly_chart(
@@ -722,7 +662,7 @@ if uploaded is not None:
         )
 
         # =====================================
-        # CALCULATIONS
+        # RESULTS
         # =====================================
 
         results = []
@@ -761,48 +701,96 @@ if uploaded is not None:
         if not results_df.empty:
 
             avg_row = {
-
-                "Cycle":
-                    "Average"
-
+                "Cycle": "Average"
             }
 
             for col in results_df.columns[1:]:
 
                 avg_row[col] = round(
-
                     pd.to_numeric(
                         results_df[col],
                         errors="coerce"
                     ).mean(),
-
                     2
-
                 )
 
             results_df = pd.concat(
-
                 [
                     results_df,
-
                     pd.DataFrame(
                         [avg_row]
                     )
-
                 ],
-
                 ignore_index=True
-
             )
 
             st.subheader(
-                "Response Results"
+                "Response Metrics"
             )
 
             st.dataframe(
                 results_df,
                 use_container_width=True,
                 hide_index=True
+            )
+
+        # =====================================
+        # PER-CYCLE PLOTS
+        # =====================================
+
+        st.subheader(
+            "Individual Cycles"
+        )
+
+        for i, (
+            start,
+            end
+        ) in enumerate(
+            cycles
+        ):
+
+            left = max(
+                0,
+                start - 20
+            )
+
+            right = min(
+                len(signal),
+                end + 20
+            )
+
+            fig_cycle = go.Figure()
+
+            fig_cycle.add_trace(
+                go.Scatter(
+                    x=time[left:right],
+                    y=signal[left:right],
+                    mode="lines"
+                )
+            )
+
+            fig_cycle.add_vline(
+                x=time[start],
+                line_color="green",
+                line_width=3
+            )
+
+            fig_cycle.add_vline(
+                x=time[end],
+                line_color="red",
+                line_width=3
+            )
+
+            fig_cycle.update_layout(
+                title=f"Cycle {i+1}",
+                xaxis_title="Time (s)",
+                yaxis_title="Signal",
+                height=400
+            )
+
+            st.plotly_chart(
+                fig_cycle,
+                use_container_width=True
             )
 
         # =====================================
@@ -825,15 +813,10 @@ if uploaded is not None:
                 )
 
             st.download_button(
-
                 "Download Analysis",
-
-                output.getvalue(),
-
+                data=output.getvalue(),
                 file_name="sensor_response_analysis.xlsx",
-
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-
             )
 
     except Exception as e:
@@ -847,21 +830,4 @@ else:
     st.info(
         "Upload a file to begin analysis."
     )
-    Python
-1
-if uploaded.name.endswith(".csv"):
-2
-df = pd.read_csv(uploaded)
-3
-else:
-4
-df = pd.read_excel(uploaded, header=None)
-5
- 
-6
-st.write("Shape:", df.shape)
-7
-st.write(df.head(20))
-8
-st.stop()
-    
+`
