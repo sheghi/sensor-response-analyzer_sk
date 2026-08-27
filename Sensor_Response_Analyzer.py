@@ -33,16 +33,12 @@ def prepare_time(df):
         errors="coerce"
     )
 
-    if t.isna().all():
-
-        return np.array([])
-
-    t = t.dropna()
+    t = t.to_numpy()
 
     return (
-        (t - t.iloc[0])
-        * 86400
-    ).to_numpy()
+        t - t[0]
+    ) * 86400
+
 
 # =====================================================
 # SMOOTHING
@@ -53,13 +49,14 @@ def smooth_signal(signal):
     return (
         pd.Series(signal)
         .rolling(
-            window=9,
+            window=11,
             center=True,
             min_periods=1
         )
         .mean()
         .to_numpy()
     )
+
 
 # =====================================================
 # INTERPOLATION
@@ -80,23 +77,23 @@ def interpolate_crossing(
         if rising:
 
             crossed = (
-                signal[i-1] < target
+                signal[i - 1] < target
                 and signal[i] >= target
             )
 
         else:
 
             crossed = (
-                signal[i-1] > target
+                signal[i - 1] > target
                 and signal[i] <= target
             )
 
         if crossed:
 
-            x1 = time[i-1]
+            x1 = time[i - 1]
             x2 = time[i]
 
-            y1 = signal[i-1]
+            y1 = signal[i - 1]
             y2 = signal[i]
 
             if y1 == y2:
@@ -118,6 +115,7 @@ def interpolate_crossing(
 
     return np.nan
 
+
 # =====================================================
 # CYCLE DETECTION
 # =====================================================
@@ -131,35 +129,34 @@ def detect_cycles(
         signal
     )
 
-    low_level = np.percentile(
+    low = np.percentile(
         smoothed,
         10
     )
 
-    high_level = np.percentile(
+    high = np.percentile(
         smoothed,
         90
     )
 
     threshold = (
-        low_level
-        + high_level
+        low + high
     ) / 2
 
     state = (
         smoothed > threshold
     ).astype(int)
 
-    transitions = np.diff(
+    changes = np.diff(
         state
     )
 
     rises = np.where(
-        transitions == 1
+        changes == 1
     )[0]
 
     falls = np.where(
-        transitions == -1
+        changes == -1
     )[0]
 
     cycles = []
@@ -184,12 +181,8 @@ def detect_cycles(
             - time[rise]
         )
 
-        # Expected ON ≈ 1080 s
-
         if (
-            700
-            <= duration
-            <= 1400
+            700 <= duration <= 1500
         ):
 
             cycles.append(
@@ -220,20 +213,20 @@ def analyse_cycle(
     )
 
     # -------------------------------------
-    # Baseline before exposure
+    # BASELINE
     # -------------------------------------
 
     baseline = np.median(
 
         smoothed[
             max(0, start - 20):
-            max(start - 3, 1)
+            max(start - 5, 1)
         ]
 
     )
 
     # -------------------------------------
-    # Plateau during exposure
+    # PLATEAU
     # -------------------------------------
 
     plateau_start = (
@@ -263,27 +256,27 @@ def analyse_cycle(
 
     )
 
-    response_size = (
+    delta = (
         plateau
         - baseline
     )
 
-    if abs(response_size) < 0.01:
+    if abs(delta) < 0.01:
 
         return None
 
     # -------------------------------------
-    # Response levels
+    # RESPONSE LEVELS
     # -------------------------------------
 
     level63 = (
         baseline
-        + 0.63 * response_size
+        + 0.63 * delta
     )
 
     level90 = (
         baseline
-        + 0.90 * response_size
+        + 0.90 * delta
     )
 
     response_signal = smoothed[
@@ -309,17 +302,17 @@ def analyse_cycle(
     )
 
     # -------------------------------------
-    # Recovery levels
+    # RECOVERY LEVELS
     # -------------------------------------
 
     level37 = (
         baseline
-        + 0.37 * response_size
+        + 0.37 * delta
     )
 
     level10 = (
         baseline
-        + 0.10 * response_size
+        + 0.10 * delta
     )
 
     recovery_signal = smoothed[
@@ -345,7 +338,7 @@ def analyse_cycle(
     )
 
     # -------------------------------------
-    # Calculate times
+    # CALCULATED TIMES
     # -------------------------------------
 
     t63 = (
@@ -417,7 +410,7 @@ def analyse_cycle(
 
         "Response Size":
             round(
-                response_size,
+                delta,
                 4
             ),
 
@@ -452,6 +445,7 @@ def analyse_cycle(
             ) if not np.isnan(
                 t10
             ) else np.nan
+
     }
     # =====================================================
 # MAIN
@@ -460,6 +454,10 @@ def analyse_cycle(
 if uploaded is not None:
 
     try:
+
+        # =====================================
+        # LOAD FILE
+        # =====================================
 
         if uploaded.name.endswith(".csv"):
 
@@ -473,58 +471,46 @@ if uploaded is not None:
                 uploaded
             )
 
+        # Force first two columns to be
+        # time and signal
+
+        if len(df.columns) < 2:
+
+            st.error(
+                "File must contain at least 2 columns."
+            )
+
+            st.stop()
+
+        df = df.iloc[:, :2].copy()
+
         df.columns = [
-            str(c).lower().strip()
-            for c in df.columns
+            "time",
+            "signal"
         ]
 
         # =====================================
-        # VALIDATE REQUIRED COLUMNS
+        # CLEANING
         # =====================================
 
-        if "time" not in df.columns:
-
-            st.error(
-                "Column 'time' not found."
-            )
-            st.stop()
-
-        if "signal" not in df.columns:
-
-            st.error(
-                "Column 'signal' not found."
-            )
-            st.stop()
-
-        signal = pd.to_numeric(
-            df["signal"],
-            errors="coerce"
-        )
-
-        time_raw = pd.to_numeric(
+        df["time"] = pd.to_numeric(
             df["time"],
             errors="coerce"
         )
 
-        mask = (
-
-            signal.notna()
-
-            &
-
-            time_raw.notna()
-
+        df["signal"] = pd.to_numeric(
+            df["signal"],
+            errors="coerce"
         )
 
-        df = df.loc[
-            mask
-        ].copy()
+        df = df.dropna()
 
         if len(df) == 0:
 
             st.error(
-                "No valid rows remain after cleaning."
+                "No valid rows found."
             )
+
             st.stop()
 
         signal = df[
@@ -535,11 +521,12 @@ if uploaded is not None:
             df
         )
 
-        if len(time) == 0:
+        if len(time) < 2:
 
             st.error(
-                "Unable to generate time axis."
+                "Time column invalid."
             )
+
             st.stop()
 
         smoothed = smooth_signal(
@@ -552,7 +539,7 @@ if uploaded is not None:
         )
 
         # =====================================
-        # DATA SUMMARY
+        # SUMMARY
         # =====================================
 
         st.success(
@@ -560,7 +547,7 @@ if uploaded is not None:
         )
 
         st.write(
-            f"Rows loaded: {len(df)}"
+            f"Rows: {len(df)}"
         )
 
         st.write(
@@ -616,10 +603,13 @@ if uploaded is not None:
                             )
                     }
 
-                    for i, (
+                    for i,
+                    (
                         start,
                         end
-                    ) in enumerate(
+                    )
+
+                    in enumerate(
                         cycles
                     )
                 ]
@@ -648,38 +638,60 @@ if uploaded is not None:
         fig = go.Figure()
 
         fig.add_trace(
+
             go.Scatter(
+
                 x=time,
+
                 y=signal,
+
                 mode="lines",
-                name="Raw Signal",
+
+                name="Signal",
+
                 line=dict(
                     color="lightgrey"
                 )
+
             )
+
         )
 
         fig.add_trace(
+
             go.Scatter(
+
                 x=time,
+
                 y=smoothed,
+
                 mode="lines",
-                name="Smoothed Signal",
+
+                name="Smoothed",
+
                 line=dict(
                     color="blue",
                     width=2
                 )
+
             )
+
         )
 
         for start, end in cycles:
 
             fig.add_vrect(
+
                 x0=time[start],
+
                 x1=time[end],
+
                 fillcolor="green",
+
                 opacity=0.08,
+
                 line_width=0
+
             )
 
             fig.add_vline(
@@ -694,13 +706,13 @@ if uploaded is not None:
 
         fig.update_layout(
 
-            title="Detected ON Periods",
+            height=700,
+
+            title="Detected Cycles",
 
             xaxis_title="Time (s)",
 
-            yaxis_title="Signal",
-
-            height=700
+            yaxis_title="Signal"
 
         )
 
@@ -710,7 +722,7 @@ if uploaded is not None:
         )
 
         # =====================================
-        # RESULTS
+        # CALCULATIONS
         # =====================================
 
         results = []
@@ -784,13 +796,13 @@ if uploaded is not None:
             )
 
             st.subheader(
-                "Cycle Results"
+                "Response Results"
             )
 
             st.dataframe(
                 results_df,
-                hide_index=True,
-                use_container_width=True
+                use_container_width=True,
+                hide_index=True
             )
 
         # =====================================
@@ -835,3 +847,4 @@ else:
     st.info(
         "Upload a file to begin analysis."
     )
+    
