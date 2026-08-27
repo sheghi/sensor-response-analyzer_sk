@@ -98,6 +98,7 @@ def interpolate_crossing(
             y2 = signal[i]
 
             if y1 == y2:
+
                 return t1
 
             frac = (
@@ -108,10 +109,34 @@ def interpolate_crossing(
 
             return (
                 t1
-                + frac * (t2 - t1)
+                + frac * (
+                    t2 - t1
+                )
             )
 
     return np.nan
+
+# =====================================================
+# EVENT MERGE
+# =====================================================
+
+def merge_events(events, gap=20):
+
+    if len(events) == 0:
+
+        return []
+
+    merged = [int(events[0])]
+
+    for e in events[1:]:
+
+        if e - merged[-1] > gap:
+
+            merged.append(
+                int(e)
+            )
+
+    return merged
 
 # =====================================================
 # CYCLE DETECTION
@@ -121,55 +146,57 @@ def detect_cycles(signal):
 
     smoothed = smooth_signal(signal)
 
-    grad = np.gradient(smoothed)
+    grad = np.gradient(
+        smoothed
+    )
 
     threshold = (
-        0.15
+        0.05
         * np.max(
             np.abs(grad)
         )
     )
 
-    events = np.where(
-        np.abs(grad) > threshold
+    rise_events = np.where(
+        grad > threshold
     )[0]
 
-    if len(events) == 0:
+    fall_events = np.where(
+        grad < -threshold
+    )[0]
 
-        return []
+    rise_events = merge_events(
+        rise_events,
+        gap=20
+    )
 
-    merged = [events[0]]
-
-    for e in events[1:]:
-
-        if (
-            e - merged[-1]
-        ) > 20:
-
-            merged.append(e)
+    fall_events = merge_events(
+        fall_events,
+        gap=20
+    )
 
     cycles = []
 
-    i = 0
+    j = 0
 
-    while i < len(merged) - 1:
+    for rise in rise_events:
 
-        start = merged[i]
-        end = merged[i + 1]
-
-        if (
-            grad[start] > 0
-            and grad[end] < 0
+        while (
+            j < len(fall_events)
+            and fall_events[j] < rise
         ):
+            j += 1
+
+        if j < len(fall_events):
 
             cycles.append(
                 (
-                    int(start),
-                    int(end)
+                    int(rise),
+                    int(fall_events[j])
                 )
             )
 
-        i += 2
+            j += 1
 
     return cycles
     # =====================================================
@@ -185,31 +212,55 @@ def analyse_cycle(
     cycle_no
 ):
 
-    smoothed = smooth_signal(signal)
+    smoothed = smooth_signal(
+        signal
+    )
+
+    # =====================================
+    # BASELINE
+    # =====================================
 
     baseline = np.median(
 
         smoothed[
-            max(0, start - 50):
-            max(start - 10, 1)
-        ]
-
-    )
-
-    plateau = np.median(
-
-        smoothed[
-            start + int(
-                0.30 * (end - start)
+            max(
+                0,
+                start - 50
             ):
-            start + int(
-                0.70 * (end - start)
+            max(
+                start - 10,
+                1
             )
         ]
 
     )
 
-    delta = plateau - baseline
+    # =====================================
+    # PLATEAU
+    # =====================================
+
+    plateau = np.median(
+
+        smoothed[
+            start + int(
+                0.30
+                * (
+                    end - start
+                )
+            ):
+            start + int(
+                0.70
+                * (
+                    end - start
+                )
+            )
+        ]
+
+    )
+
+    delta = (
+        plateau - baseline
+    )
 
     if abs(delta) < 0.05:
 
@@ -287,32 +338,41 @@ def analyse_cycle(
         False
     )
 
+    # =====================================
+    # TIMES
+    # =====================================
+
     t63 = (
-        t63_cross - time[start]
+        t63_cross
+        - time[start]
     ) if not np.isnan(
         t63_cross
     ) else np.nan
 
     t90 = (
-        t90_cross - time[start]
+        t90_cross
+        - time[start]
     ) if not np.isnan(
         t90_cross
     ) else np.nan
 
     t37 = (
-        t37_cross - time[end]
+        t37_cross
+        - time[end]
     ) if not np.isnan(
         t37_cross
     ) else np.nan
 
     t10 = (
-        t10_cross - time[end]
+        t10_cross
+        - time[end]
     ) if not np.isnan(
         t10_cross
     ) else np.nan
 
     exposure_time = (
-        time[end] - time[start]
+        time[end]
+        - time[start]
     )
 
     return {
@@ -322,31 +382,41 @@ def analyse_cycle(
 
         "Exposure Time (s)":
             round(
-                float(exposure_time),
+                float(
+                    exposure_time
+                ),
                 2
             ),
 
         "Baseline":
             round(
-                float(baseline),
+                float(
+                    baseline
+                ),
                 4
             ),
 
         "Plateau":
             round(
-                float(plateau),
+                float(
+                    plateau
+                ),
                 4
             ),
 
         "Response Size":
             round(
-                float(delta),
+                float(
+                    delta
+                ),
                 4
             ),
 
         "T63 Response (s)":
             round(
-                float(t63),
+                float(
+                    t63
+                ),
                 2
             ) if not np.isnan(
                 t63
@@ -354,7 +424,9 @@ def analyse_cycle(
 
         "T90 Response (s)":
             round(
-                float(t90),
+                float(
+                    t90
+                ),
                 2
             ) if not np.isnan(
                 t90
@@ -362,7 +434,9 @@ def analyse_cycle(
 
         "T37 Recovery (s)":
             round(
-                float(t37),
+                float(
+                    t37
+                ),
                 2
             ) if not np.isnan(
                 t37
@@ -370,7 +444,9 @@ def analyse_cycle(
 
         "T10 Recovery (s)":
             round(
-                float(t10),
+                float(
+                    t10
+                ),
                 2
             ) if not np.isnan(
                 t10
@@ -424,13 +500,13 @@ if uploaded is not None:
             signal
         )
 
+        # =====================================
+        # DETECTION SUMMARY
+        # =====================================
+
         st.success(
             f"Detected {len(cycles)} cycles"
         )
-
-        # ==========================================
-        # CYCLE TABLE
-        # ==========================================
 
         st.subheader(
             "Detected Cycles"
@@ -442,7 +518,7 @@ if uploaded is not None:
                     "Cycle": i + 1,
                     "Start Index": start,
                     "End Index": end,
-                    "Duration (points)": end - start,
+                    "Length": end - start,
                     "Start Time (s)": round(
                         time[start],
                         2
@@ -452,8 +528,12 @@ if uploaded is not None:
                         2
                     )
                 }
-                for i, (start, end)
-                in enumerate(cycles)
+                for i, (
+                    start,
+                    end
+                ) in enumerate(
+                    cycles
+                )
             ]
         )
 
@@ -462,9 +542,9 @@ if uploaded is not None:
             use_container_width=True
         )
 
-        # ==========================================
+        # =====================================
         # OVERVIEW PLOT
-        # ==========================================
+        # =====================================
 
         st.subheader(
             "Cycle Detection Overview"
@@ -497,7 +577,12 @@ if uploaded is not None:
             )
         )
 
-        for i, (start, end) in enumerate(cycles):
+        for i, (
+            start,
+            end
+        ) in enumerate(
+            cycles
+        ):
 
             fig.add_vrect(
                 x0=time[start],
@@ -512,7 +597,9 @@ if uploaded is not None:
                     x=[time[start]],
                     y=[smoothed[start]],
                     mode="markers+text",
-                    text=[f"ON {i+1}"],
+                    text=[
+                        f"ON {i+1}"
+                    ],
                     textposition="top center",
                     marker=dict(
                         color="green",
@@ -528,7 +615,9 @@ if uploaded is not None:
                     x=[time[end]],
                     y=[smoothed[end]],
                     mode="markers+text",
-                    text=[f"OFF {i+1}"],
+                    text=[
+                        f"OFF {i+1}"
+                    ],
                     textposition="bottom center",
                     marker=dict(
                         color="red",
@@ -540,7 +629,7 @@ if uploaded is not None:
             )
 
         fig.update_layout(
-            title="Detected Cycles",
+            title="Detected ON/OFF Events",
             xaxis_title="Time (s)",
             yaxis_title="Signal",
             height=800
@@ -551,9 +640,9 @@ if uploaded is not None:
             use_container_width=True
         )
 
-        # ==========================================
+        # =====================================
         # GRADIENT DIAGNOSTIC
-        # ==========================================
+        # =====================================
 
         st.subheader(
             "Gradient Diagnostic"
@@ -561,6 +650,13 @@ if uploaded is not None:
 
         grad = np.gradient(
             smoothed
+        )
+
+        threshold = (
+            0.05
+            * np.max(
+                np.abs(grad)
+            )
         )
 
         fig_grad = go.Figure()
@@ -575,12 +671,19 @@ if uploaded is not None:
         )
 
         fig_grad.add_hline(
-            y=0,
+            y=threshold,
+            line_color="green",
+            line_dash="dash"
+        )
+
+        fig_grad.add_hline(
+            y=-threshold,
+            line_color="red",
             line_dash="dash"
         )
 
         fig_grad.update_layout(
-            title="Gradient vs Time",
+            title="Gradient Diagnostic",
             xaxis_title="Time (s)",
             yaxis_title="Gradient",
             height=450
@@ -591,9 +694,9 @@ if uploaded is not None:
             use_container_width=True
         )
 
-        # ==========================================
+        # =====================================
         # CALCULATIONS
-        # ==========================================
+        # =====================================
 
         results = []
 
@@ -662,26 +765,29 @@ if uploaded is not None:
                 hide_index=True
             )
 
-        # ==========================================
+        # =====================================
         # INDIVIDUAL CYCLE PLOTS
-        # ==========================================
+        # =====================================
 
         st.subheader(
             "Individual Cycle Diagnostics"
         )
 
-        for i, (start, end) in enumerate(cycles):
-
-            pad = 50
+        for i, (
+            start,
+            end
+        ) in enumerate(
+            cycles
+        ):
 
             left = max(
                 0,
-                start - pad
+                start - 50
             )
 
             right = min(
                 len(signal),
-                end + pad
+                end + 50
             )
 
             fig_cycle = go.Figure()
@@ -709,9 +815,9 @@ if uploaded is not None:
 
             fig_cycle.update_layout(
                 title=f"Cycle {i+1}",
+                height=400,
                 xaxis_title="Time (s)",
-                yaxis_title="Signal",
-                height=400
+                yaxis_title="Signal"
             )
 
             st.plotly_chart(
@@ -719,9 +825,9 @@ if uploaded is not None:
                 use_container_width=True
             )
 
-        # ==========================================
+        # =====================================
         # NORMALIZED RESPONSE
-        # ==========================================
+        # =====================================
 
         st.subheader(
             "Normalized Response Per Cycle"
@@ -753,10 +859,14 @@ if uploaded is not None:
             plateau = np.median(
                 smoothed[
                     start + int(
-                        0.30 * (end - start)
+                        0.30 * (
+                            end - start
+                        )
                     ):
                     start + int(
-                        0.70 * (end - start)
+                        0.70 * (
+                            end - start
+                        )
                     )
                 ]
             )
@@ -804,9 +914,9 @@ if uploaded is not None:
                 use_container_width=True
             )
 
-        # ==========================================
+        # =====================================
         # EXPORT
-        # ==========================================
+        # =====================================
 
         if not results_df.empty:
 
