@@ -26,24 +26,15 @@ uploaded = st.file_uploader(
 
 def prepare_time(df):
 
-    try:
+    t = pd.to_numeric(
+        df["time"],
+        errors="coerce"
+    )
 
-        t = pd.to_numeric(
-            df["time"],
-            errors="coerce"
-        )
-
-        if t.notna().all():
-
-            return (
-                (t - t.iloc[0]) * 86400
-            ).to_numpy()
-
-    except Exception:
-
-        pass
-
-    return np.arange(len(df))
+    return (
+        (t - t.iloc[0])
+        * 86400
+    ).to_numpy()
 
 # =====================================================
 # SMOOTHING
@@ -108,7 +99,10 @@ def interpolate_crossing(
             )
 
             return (
-                x1 + frac * (x2 - x1)
+                x1
+                + frac * (
+                    x2 - x1
+                )
             )
 
     return np.nan
@@ -117,45 +111,83 @@ def interpolate_crossing(
 # CYCLE DETECTION
 # =====================================================
 
-def detect_cycles(signal):
+def detect_cycles(
+    signal,
+    time
+):
 
     smoothed = smooth_signal(
         signal
     )
 
-    grad = np.gradient(
-        smoothed
+    low_level = np.percentile(
+        smoothed,
+        10
     )
 
-    # Find first major ON transition
-
-    first_on = np.argmax(
-        grad
+    high_level = np.percentile(
+        smoothed,
+        90
     )
 
-    # 18 min ON at 10 s/sample
-    on_points = 108
+    threshold = (
+        low_level
+        + high_level
+    ) / 2
 
-    # 18 min OFF + 18 min ON
-    cycle_points = 216
+    state = (
+        smoothed > threshold
+    ).astype(int)
+
+    transitions = np.diff(
+        state
+    )
+
+    rises = np.where(
+        transitions == 1
+    )[0]
+
+    falls = np.where(
+        transitions == -1
+    )[0]
 
     cycles = []
 
-    start = first_on
+    j = 0
 
-    while (
-        start + on_points
-        < len(signal)
-    ):
+    for rise in rises:
 
-        cycles.append(
-            (
-                int(start),
-                int(start + on_points)
-            )
+        while (
+            j < len(falls)
+            and falls[j] < rise
+        ):
+            j += 1
+
+        if j >= len(falls):
+            break
+
+        fall = falls[j]
+
+        duration = (
+            time[fall]
+            - time[rise]
         )
 
-        start += cycle_points
+        # expected ON time
+        # approximately 1080 s
+
+        if (
+            800 <= duration <= 1400
+        ):
+
+            cycles.append(
+                (
+                    int(rise),
+                    int(fall)
+                )
+            )
+
+        j += 1
 
     return cycles
     # =====================================================
@@ -182,8 +214,8 @@ def analyse_cycle(
     baseline = np.median(
 
         smoothed[
-            max(0, start - 30):
-            max(start - 5, 1)
+            max(0, start - 20):
+            max(start - 3, 1)
         ]
 
     )
@@ -196,14 +228,10 @@ def analyse_cycle(
 
         smoothed[
             start + int(
-                0.40 * (
-                    end - start
-                )
+                0.30 * (end - start)
             ):
             start + int(
-                0.80 * (
-                    end - start
-                )
+                0.80 * (end - start)
             )
         ]
 
@@ -218,17 +246,17 @@ def analyse_cycle(
         return None
 
     # =====================================
-    # RESPONSE TIMES
+    # RESPONSE LEVELS
     # =====================================
 
     level63 = (
-        baseline +
-        0.63 * delta
+        baseline
+        + 0.63 * delta
     )
 
     level90 = (
-        baseline +
-        0.90 * delta
+        baseline
+        + 0.90 * delta
     )
 
     response_signal = smoothed[
@@ -254,17 +282,17 @@ def analyse_cycle(
     )
 
     # =====================================
-    # RECOVERY TIMES
+    # RECOVERY LEVELS
     # =====================================
 
     level37 = (
-        baseline +
-        0.37 * delta
+        baseline
+        + 0.37 * delta
     )
 
     level10 = (
-        baseline +
-        0.10 * delta
+        baseline
+        + 0.10 * delta
     )
 
     recovery_signal = smoothed[
@@ -289,26 +317,34 @@ def analyse_cycle(
         rising=False
     )
 
+    # =====================================
+    # TIMES
+    # =====================================
+
     t63 = (
-        t63_cross - time[start]
+        t63_cross
+        - time[start]
     ) if not np.isnan(
         t63_cross
     ) else np.nan
 
     t90 = (
-        t90_cross - time[start]
+        t90_cross
+        - time[start]
     ) if not np.isnan(
         t90_cross
     ) else np.nan
 
     t37 = (
-        t37_cross - time[end]
+        t37_cross
+        - time[end]
     ) if not np.isnan(
         t37_cross
     ) else np.nan
 
     t10 = (
-        t10_cross - time[end]
+        t10_cross
+        - time[end]
     ) if not np.isnan(
         t10_cross
     ) else np.nan
@@ -455,7 +491,8 @@ if uploaded is not None:
         )
 
         cycles = detect_cycles(
-            signal
+            signal,
+            time
         )
 
         st.success(
@@ -463,15 +500,15 @@ if uploaded is not None:
         )
 
         st.write(
-            f"Total points: {len(signal)}"
+            f"Sample interval: {np.median(np.diff(time)):.1f} s"
         )
 
         st.write(
-            f"Final time: {time[-1]:.1f} s"
+            f"Total duration: {time[-1]/60:.1f} min"
         )
 
         # =====================================
-        # DETECTED CYCLE TABLE
+        # CYCLE TABLE
         # =====================================
 
         cycle_table = pd.DataFrame(
@@ -527,7 +564,7 @@ if uploaded is not None:
                 mode="lines",
                 name="Raw Signal",
                 line=dict(
-                    color="lightgray"
+                    color="lightgrey"
                 )
             )
         )
@@ -585,7 +622,7 @@ if uploaded is not None:
         )
 
         # =====================================
-        # RESULTS
+        # CALCULATIONS
         # =====================================
 
         results = []
@@ -651,12 +688,12 @@ if uploaded is not None:
 
             st.dataframe(
                 results_df,
-                use_container_width=True,
-                hide_index=True
+                hide_index=True,
+                use_container_width=True
             )
 
         # =====================================
-        # INDIVIDUAL CYCLES
+        # INDIVIDUAL CYCLE DIAGNOSTICS
         # =====================================
 
         st.subheader(
@@ -672,12 +709,12 @@ if uploaded is not None:
 
             left = max(
                 0,
-                start - 20
+                start - 10
             )
 
             right = min(
                 len(signal),
-                end + 20
+                end + 10
             )
 
             fig_cycle = go.Figure()
