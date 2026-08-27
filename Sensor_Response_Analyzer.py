@@ -54,7 +54,7 @@ def smooth_signal(signal):
     return (
         pd.Series(signal)
         .rolling(
-            window=11,
+            window=5,
             center=True,
             min_periods=1
         )
@@ -120,7 +120,7 @@ def interpolate_crossing(
 # EVENT MERGE
 # =====================================================
 
-def merge_events(events, gap=20):
+def merge_events(events, gap=5):
 
     if len(events) == 0:
 
@@ -151,7 +151,7 @@ def detect_cycles(signal):
     )
 
     threshold = (
-        0.05
+        0.02
         * np.max(
             np.abs(grad)
         )
@@ -167,12 +167,12 @@ def detect_cycles(signal):
 
     rise_events = merge_events(
         rise_events,
-        gap=20
+        gap=5
     )
 
     fall_events = merge_events(
         fall_events,
-        gap=20
+        gap=5
     )
 
     cycles = []
@@ -225,10 +225,10 @@ def analyse_cycle(
         smoothed[
             max(
                 0,
-                start - 50
+                start - 30
             ):
             max(
-                start - 10,
+                start - 5,
                 1
             )
         ]
@@ -243,14 +243,12 @@ def analyse_cycle(
 
         smoothed[
             start + int(
-                0.30
-                * (
+                0.30 * (
                     end - start
                 )
             ):
             start + int(
-                0.70
-                * (
+                0.70 * (
                     end - start
                 )
             )
@@ -262,12 +260,12 @@ def analyse_cycle(
         plateau - baseline
     )
 
-    if abs(delta) < 0.05:
+    if abs(delta) < 0.01:
 
         return None
 
     # =====================================
-    # RESPONSE LEVELS
+    # RESPONSE
     # =====================================
 
     level63 = (
@@ -303,7 +301,7 @@ def analyse_cycle(
     )
 
     # =====================================
-    # RECOVERY LEVELS
+    # RECOVERY
     # =====================================
 
     level37 = (
@@ -500,13 +498,13 @@ if uploaded is not None:
             signal
         )
 
-        # =====================================
-        # DETECTION SUMMARY
-        # =====================================
-
         st.success(
             f"Detected {len(cycles)} cycles"
         )
+
+        # =====================================
+        # CYCLE TABLE
+        # =====================================
 
         st.subheader(
             "Detected Cycles"
@@ -518,7 +516,10 @@ if uploaded is not None:
                     "Cycle": i + 1,
                     "Start Index": start,
                     "End Index": end,
-                    "Length": end - start,
+                    "Duration (s)": round(
+                        time[end] - time[start],
+                        2
+                    ),
                     "Start Time (s)": round(
                         time[start],
                         2
@@ -641,60 +642,6 @@ if uploaded is not None:
         )
 
         # =====================================
-        # GRADIENT DIAGNOSTIC
-        # =====================================
-
-        st.subheader(
-            "Gradient Diagnostic"
-        )
-
-        grad = np.gradient(
-            smoothed
-        )
-
-        threshold = (
-            0.05
-            * np.max(
-                np.abs(grad)
-            )
-        )
-
-        fig_grad = go.Figure()
-
-        fig_grad.add_trace(
-            go.Scatter(
-                x=time,
-                y=grad,
-                mode="lines",
-                name="Gradient"
-            )
-        )
-
-        fig_grad.add_hline(
-            y=threshold,
-            line_color="green",
-            line_dash="dash"
-        )
-
-        fig_grad.add_hline(
-            y=-threshold,
-            line_color="red",
-            line_dash="dash"
-        )
-
-        fig_grad.update_layout(
-            title="Gradient Diagnostic",
-            xaxis_title="Time (s)",
-            yaxis_title="Gradient",
-            height=450
-        )
-
-        st.plotly_chart(
-            fig_grad,
-            use_container_width=True
-        )
-
-        # =====================================
         # CALCULATIONS
         # =====================================
 
@@ -761,8 +708,8 @@ if uploaded is not None:
 
             st.dataframe(
                 results_df,
-                use_container_width=True,
-                hide_index=True
+                hide_index=True,
+                use_container_width=True
             )
 
         # =====================================
@@ -822,95 +769,6 @@ if uploaded is not None:
 
             st.plotly_chart(
                 fig_cycle,
-                use_container_width=True
-            )
-
-        # =====================================
-        # NORMALIZED RESPONSE
-        # =====================================
-
-        st.subheader(
-            "Normalized Response Per Cycle"
-        )
-
-        for i in range(
-            len(cycles) - 1
-        ):
-
-            start, end = cycles[i]
-
-            next_start = cycles[
-                i + 1
-            ][0]
-
-            baseline = np.median(
-                smoothed[
-                    max(
-                        0,
-                        start - 50
-                    ):
-                    max(
-                        start - 10,
-                        1
-                    )
-                ]
-            )
-
-            plateau = np.median(
-                smoothed[
-                    start + int(
-                        0.30 * (
-                            end - start
-                        )
-                    ):
-                    start + int(
-                        0.70 * (
-                            end - start
-                        )
-                    )
-                ]
-            )
-
-            if abs(
-                plateau - baseline
-            ) < 1e-12:
-
-                continue
-
-            norm = (
-                smoothed[
-                    start:next_start
-                ]
-                - baseline
-            ) / (
-                plateau - baseline
-            )
-
-            fig_norm = go.Figure()
-
-            fig_norm.add_trace(
-                go.Scatter(
-                    x=time[
-                        start:next_start
-                    ] - time[start],
-                    y=norm,
-                    mode="lines",
-                    name=f"Cycle {i+1}"
-                )
-            )
-
-            fig_norm.update_layout(
-                title=f"Normalized Cycle {i+1}",
-                xaxis_title="Time (s)",
-                yaxis_title="Normalized Response",
-                yaxis=dict(
-                    range=[0, 1.1]
-                ),
-                height=400
-            )
-
-            st.plotly_chart(
-                fig_norm,
                 use_container_width=True
             )
 
