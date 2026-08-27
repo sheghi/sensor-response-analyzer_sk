@@ -41,9 +41,12 @@ def prepare_time(df):
             ).to_numpy()
 
     except Exception:
+
         pass
 
-    return np.arange(len(df))
+    return np.arange(
+        len(df)
+    )
 
 # =====================================================
 # SMOOTHING
@@ -52,14 +55,19 @@ def prepare_time(df):
 def smooth_signal(signal):
 
     return (
+
         pd.Series(signal)
+
         .rolling(
-            window=5,
+            window=9,
             center=True,
             min_periods=1
         )
+
         .mean()
+
         .to_numpy()
+
     )
 
 # =====================================================
@@ -73,28 +81,31 @@ def interpolate_crossing(
     rising=True
 ):
 
-    for i in range(1, len(signal)):
+    for i in range(
+        1,
+        len(signal)
+    ):
 
         if rising:
 
             crossed = (
-                signal[i - 1] < target
+                signal[i-1] < target
                 and signal[i] >= target
             )
 
         else:
 
             crossed = (
-                signal[i - 1] > target
+                signal[i-1] > target
                 and signal[i] <= target
             )
 
         if crossed:
 
-            t1 = time[i - 1]
+            t1 = time[i-1]
             t2 = time[i]
 
-            y1 = signal[i - 1]
+            y1 = signal[i-1]
             y2 = signal[i]
 
             if y1 == y2:
@@ -117,20 +128,25 @@ def interpolate_crossing(
     return np.nan
 
 # =====================================================
-# EVENT MERGE
+# MERGE
 # =====================================================
 
-def merge_events(events, gap=5):
+def merge_events(
+    events,
+    gap=80
+):
 
     if len(events) == 0:
 
         return []
 
-    merged = [int(events[0])]
+    merged = [events[0]]
 
     for e in events[1:]:
 
-        if e - merged[-1] > gap:
+        if (
+            e - merged[-1]
+        ) > gap:
 
             merged.append(
                 int(e)
@@ -144,57 +160,77 @@ def merge_events(events, gap=5):
 
 def detect_cycles(signal):
 
-    smoothed = smooth_signal(signal)
+    smoothed = smooth_signal(
+        signal
+    )
 
-    grad = np.gradient(
-        smoothed
+    low_level = np.percentile(
+        smoothed,
+        20
+    )
+
+    high_level = np.percentile(
+        smoothed,
+        80
     )
 
     threshold = (
-        0.02
-        * np.max(
-            np.abs(grad)
-        )
-    )
+        low_level
+        + high_level
+    ) / 2
 
-    rise_events = np.where(
-        grad > threshold
+    state = (
+        smoothed > threshold
+    ).astype(int)
+
+    changes = np.diff(state)
+
+    rises = np.where(
+        changes == 1
     )[0]
 
-    fall_events = np.where(
-        grad < -threshold
+    falls = np.where(
+        changes == -1
     )[0]
 
-    rise_events = merge_events(
-        rise_events,
-        gap=5
+    rises = merge_events(
+        rises,
+        gap=80
     )
 
-    fall_events = merge_events(
-        fall_events,
-        gap=5
+    falls = merge_events(
+        falls,
+        gap=80
     )
 
     cycles = []
 
     j = 0
 
-    for rise in rise_events:
+    for rise in rises:
 
         while (
-            j < len(fall_events)
-            and fall_events[j] < rise
+            j < len(falls)
+            and falls[j] < rise
         ):
+
             j += 1
 
-        if j < len(fall_events):
+        if j < len(falls):
 
-            cycles.append(
-                (
-                    int(rise),
-                    int(fall_events[j])
-                )
+            duration = (
+                falls[j]
+                - rise
             )
+
+            if duration > 80:
+
+                cycles.append(
+                    (
+                        int(rise),
+                        int(falls[j])
+                    )
+                )
 
             j += 1
 
@@ -225,7 +261,7 @@ def analyse_cycle(
         smoothed[
             max(
                 0,
-                start - 30
+                start - 40
             ):
             max(
                 start - 5,
@@ -243,12 +279,12 @@ def analyse_cycle(
 
         smoothed[
             start + int(
-                0.30 * (
+                0.25 * (
                     end - start
                 )
             ):
             start + int(
-                0.70 * (
+                0.75 * (
                     end - start
                 )
             )
@@ -265,7 +301,7 @@ def analyse_cycle(
         return None
 
     # =====================================
-    # RESPONSE
+    # RESPONSE LEVELS
     # =====================================
 
     level63 = (
@@ -301,7 +337,7 @@ def analyse_cycle(
     )
 
     # =====================================
-    # RECOVERY
+    # RECOVERY LEVELS
     # =====================================
 
     level37 = (
@@ -337,7 +373,7 @@ def analyse_cycle(
     )
 
     # =====================================
-    # TIMES
+    # CALCULATED TIMES
     # =====================================
 
     t63 = (
@@ -373,6 +409,11 @@ def analyse_cycle(
         - time[start]
     )
 
+    recovery_time_total = (
+        time[next_start]
+        - time[end]
+    )
+
     return {
 
         "Cycle":
@@ -382,6 +423,14 @@ def analyse_cycle(
             round(
                 float(
                     exposure_time
+                ),
+                2
+            ),
+
+        "Recovery Window (s)":
+            round(
+                float(
+                    recovery_time_total
                 ),
                 2
             ),
@@ -488,7 +537,9 @@ if uploaded is not None:
 
         df = df.loc[mask]
 
-        time = prepare_time(df)
+        time = prepare_time(
+            df
+        )
 
         smoothed = smooth_signal(
             signal
@@ -498,8 +549,20 @@ if uploaded is not None:
             signal
         )
 
+        # =====================================
+        # SUMMARY
+        # =====================================
+
         st.success(
             f"Detected {len(cycles)} cycles"
+        )
+
+        st.write(
+            f"Total points: {len(signal)}"
+        )
+
+        st.write(
+            f"Final time: {round(time[-1], 1)} s"
         )
 
         # =====================================
@@ -517,7 +580,8 @@ if uploaded is not None:
                     "Start Index": start,
                     "End Index": end,
                     "Duration (s)": round(
-                        time[end] - time[start],
+                        time[end]
+                        - time[start],
                         2
                     ),
                     "Start Time (s)": round(
@@ -679,27 +743,36 @@ if uploaded is not None:
         if not results_df.empty:
 
             avg_row = {
-                "Cycle": "Average"
+
+                "Cycle":
+                    "Average"
+
             }
 
             for col in results_df.columns[1:]:
 
                 avg_row[col] = round(
+
                     pd.to_numeric(
                         results_df[col],
                         errors="coerce"
                     ).mean(),
+
                     2
+
                 )
 
             results_df = pd.concat(
+
                 [
                     results_df,
                     pd.DataFrame(
                         [avg_row]
                     )
                 ],
+
                 ignore_index=True
+
             )
 
             st.subheader(
@@ -729,12 +802,12 @@ if uploaded is not None:
 
             left = max(
                 0,
-                start - 50
+                start - 30
             )
 
             right = min(
                 len(signal),
-                end + 50
+                end + 30
             )
 
             fig_cycle = go.Figure()
@@ -762,9 +835,9 @@ if uploaded is not None:
 
             fig_cycle.update_layout(
                 title=f"Cycle {i+1}",
-                height=400,
                 xaxis_title="Time (s)",
-                yaxis_title="Signal"
+                yaxis_title="Signal",
+                height=400
             )
 
             st.plotly_chart(
