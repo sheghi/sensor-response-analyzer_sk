@@ -847,4 +847,21 @@ else:
     st.info(
         "Upload a file to begin analysis."
     )
+    Python
+1
+if uploaded.name.endswith(".csv"):
+2
+df = pd.read_csv(uploaded)
+3
+else:
+4
+df = pd.read_excel(uploaded, header=None)
+5
+ 
+6
+st.write("Shape:", df.shape)
+7
+st.write(df.head(20))
+8
+st.stop()
     
