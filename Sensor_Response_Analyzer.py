@@ -31,6 +31,11 @@ def prepare_time(df):
         errors="coerce"
     ).to_numpy()
 
+    diffs = np.diff(t)
+
+    if len(diffs) > 0 and np.nanmedian(diffs) > 1:
+        return t - t[0]
+
     return (t - t[0]) * 86400
 
 # =====================================================
@@ -66,23 +71,23 @@ def interpolate_crossing(
         if rising:
 
             crossed = (
-                signal[i-1] < target
+                signal[i - 1] < target
                 and signal[i] >= target
             )
 
         else:
 
             crossed = (
-                signal[i-1] > target
+                signal[i - 1] > target
                 and signal[i] <= target
             )
 
         if crossed:
 
-            x1 = time[i-1]
+            x1 = time[i - 1]
             x2 = time[i]
 
-            y1 = signal[i-1]
+            y1 = signal[i - 1]
             y2 = signal[i]
 
             if y1 == y2:
@@ -94,7 +99,10 @@ def interpolate_crossing(
                 y2 - y1
             )
 
-            return x1 + frac * (x2 - x1)
+            return (
+                x1
+                + frac * (x2 - x1)
+            )
 
     return np.nan
 
@@ -102,10 +110,7 @@ def interpolate_crossing(
 # CYCLE DETECTION
 # =====================================================
 
-def detect_cycles(
-    signal,
-    time
-):
+def detect_cycles(signal, time):
 
     smoothed = smooth_signal(signal)
 
@@ -123,7 +128,9 @@ def detect_cycles(
         low_level + high_level
     ) / 2
 
-    gas_on = smoothed > threshold
+    gas_on = (
+        smoothed > threshold
+    )
 
     changes = np.diff(
         gas_on.astype(int)
@@ -159,7 +166,6 @@ def detect_cycles(
             - time[rise]
         )
 
-        # Much looser filter
         if duration >= 300:
 
             cycles.append(
@@ -172,8 +178,7 @@ def detect_cycles(
         j += 1
 
     return cycles, threshold
-
-# =====================================================
+    # =====================================================
 # ANALYSIS
 # =====================================================
 
@@ -189,12 +194,10 @@ def analyse_cycle(
     smoothed = smooth_signal(signal)
 
     baseline = np.median(
-
         smoothed[
-            max(0, start-20):
-            max(start-5, 1)
+            max(0, start - 20):
+            max(start - 5, 1)
         ]
-
     )
 
     plateau_start = (
@@ -212,15 +215,15 @@ def analyse_cycle(
     )
 
     plateau = np.median(
-
         smoothed[
             plateau_start:
             plateau_end
         ]
-
     )
 
-    response_size = plateau - baseline
+    response_size = (
+        plateau - baseline
+    )
 
     if abs(response_size) < 0.01:
         return None
@@ -243,20 +246,6 @@ def analyse_cycle(
         start:end
     ]
 
-    t63_cross = interpolate_crossing(
-        response_signal,
-        response_time,
-        level63,
-        True
-    )
-
-    t90_cross = interpolate_crossing(
-        response_signal,
-        response_time,
-        level90,
-        True
-    )
-
     level37 = (
         baseline
         + 0.37 * response_size
@@ -274,6 +263,20 @@ def analyse_cycle(
     recovery_time = time[
         end:next_start
     ]
+
+    t63_cross = interpolate_crossing(
+        response_signal,
+        response_time,
+        level63,
+        True
+    )
+
+    t90_cross = interpolate_crossing(
+        response_signal,
+        response_time,
+        level90,
+        True
+    )
 
     t37_cross = interpolate_crossing(
         recovery_signal,
@@ -351,7 +354,11 @@ def analyse_cycle(
         round(t10, 1)
 
     }
-    if uploaded is not None:
+    # =====================================================
+# MAIN
+# =====================================================
+
+if uploaded is not None:
 
     try:
 
@@ -379,7 +386,9 @@ def analyse_cycle(
 
         df = df.dropna()
 
-        signal = df["signal"].to_numpy()
+        signal = df[
+            "signal"
+        ].to_numpy()
 
         time = prepare_time(df)
 
@@ -395,35 +404,7 @@ def analyse_cycle(
         )
 
         st.write(
-            f"Sample interval: {np.median(np.diff(time)):.1f} s"
-        )
-
-        st.write(
-            f"Total duration: {time[-1]/60:.1f} min"
-        )
-
-        st.subheader(
-            "Cycle Table"
-        )
-
-        cycle_table = pd.DataFrame([
-            {
-                "Cycle": i+1,
-                "Start (s)": round(time[s],1),
-                "End (s)": round(time[e],1),
-                "Duration (s)": round(time[e]-time[s],1)
-            }
-            for i,(s,e)
-            in enumerate(cycles)
-        ])
-
-        st.dataframe(
-            cycle_table,
-            use_container_width=True
-        )
-
-        st.subheader(
-            "Detection Overview"
+            f"Threshold = {threshold:.4f}"
         )
 
         fig = go.Figure()
@@ -432,6 +413,7 @@ def analyse_cycle(
             go.Scatter(
                 x=time,
                 y=signal,
+                mode="lines",
                 name="Raw Signal"
             )
         )
@@ -440,14 +422,14 @@ def analyse_cycle(
             go.Scatter(
                 x=time,
                 y=smoothed,
-                name="Smoothed"
+                mode="lines",
+                name="Smoothed Signal"
             )
         )
 
         fig.add_hline(
             y=threshold,
-            line_color="red",
-            annotation_text="Threshold"
+            line_color="red"
         )
 
         for start, end in cycles:
@@ -462,14 +444,6 @@ def analyse_cycle(
                 line_color="red"
             )
 
-            fig.add_vrect(
-                x0=time[start],
-                x1=time[end],
-                opacity=0.10,
-                fillcolor="green",
-                line_width=0
-            )
-
         st.plotly_chart(
             fig,
             use_container_width=True
@@ -477,33 +451,59 @@ def analyse_cycle(
 
         results = []
 
-        for i in range(
-            len(cycles)-1
-        ):
+        if len(cycles) > 1:
 
-            row = analyse_cycle(
-                signal,
-                time,
-                cycles[i][0],
-                cycles[i][1],
-                cycles[i+1][0],
-                i+1
-            )
+            for i in range(
+                len(cycles) - 1
+            ):
 
-            if row is not None:
-                results.append(row)
+                start, end = cycles[i]
 
-        results_df = pd.DataFrame(results)
+                next_start = (
+                    cycles[i + 1][0]
+                )
+
+                row = analyse_cycle(
+                    signal,
+                    time,
+                    start,
+                    end,
+                    next_start,
+                    i + 1
+                )
+
+                if row is not None:
+                    results.append(row)
+
+        results_df = pd.DataFrame(
+            results
+        )
 
         if not results_df.empty:
-
-            st.subheader(
-                "Response Metrics"
-            )
 
             st.dataframe(
                 results_df,
                 use_container_width=True
+            )
+
+            output = BytesIO()
+
+            with pd.ExcelWriter(
+                output,
+                engine="openpyxl"
+            ) as writer:
+
+                results_df.to_excel(
+                    writer,
+                    index=False,
+                    sheet_name="Results"
+                )
+
+            st.download_button(
+                "Download Analysis",
+                data=output.getvalue(),
+                file_name="sensor_response_analysis.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
     except Exception as e:
